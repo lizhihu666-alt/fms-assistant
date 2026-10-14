@@ -430,6 +430,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg && msg.type === "bill:siblings") {
+    // 请款前检查：同品牌（同品牌商公司 + 同店铺）是否还有别的「待生成请款单」账单。
+    // FMS 请款时可能把它们一起并进同一张费控单，所以先让用户确认。读取失败不拦着请款。
+    (async () => {
+      try {
+        const nos = msg.billNos || [];
+        const recs = await withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => {
+          const r = await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表");
+          return r.records;
+        });
+        const mine = recs.filter((x) => nos.includes(x.settlementNo));
+        const keyOf = (x) => [x.brandName, x.brandCompany, x.shopCode].join("|");
+        const keys = new Set(mine.filter((x) => x.settlementStatus === "PENDING_GENERATE_REQUEST").map(keyOf));
+        const siblings = recs
+          .filter((x) => !nos.includes(x.settlementNo) && x.settlementStatus === "PENDING_GENERATE_REQUEST" && keys.has(keyOf(x)))
+          .map((x) => ({ billNo: x.settlementNo, brand: x.brandName, month: x.accountingMonth }));
+        sendResponse({ ok: true, siblings });
+      } catch (err) {
+        console.error(err);
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
   if (msg && msg.type === "bill:generate") {
     (async () => {
       const job = (await chrome.storage.local.get(GEN_KEY))[GEN_KEY];

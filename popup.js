@@ -554,6 +554,25 @@
     step2Btn.disabled = true;
 
     try {
+      // 请款前先看同品牌有没有别的待请款账单：FMS 请款时可能把它们并进同一张费控单，让用户自己决定
+      setInvoiceStatus("检查同品牌的其他待请款账单…", "busy");
+      let sib = null;
+      try {
+        sib = await chrome.runtime.sendMessage({ type: "bill:siblings", billNos: nos });
+      } catch (e) {
+        sib = null;
+      }
+      if (sib && sib.ok && sib.siblings.length) {
+        const list = sib.siblings.map((s) => s.brand + " " + s.month + "（" + s.billNo + "）").join("\n");
+        const go = window.confirm(
+          "同品牌还有 " + sib.siblings.length + " 张待请款账单：\n" + list +
+          "\n\nFMS 请款时可能会把它们一起并进同一张请款单（金额合并）。\n\n确定：继续请款\n取消：先不请款（可以先到 FMS 处理其他账单）"
+        );
+        if (!go) {
+          setInvoiceStatus("已取消请款，没有对 FMS 做任何改动。", "");
+          return;
+        }
+      }
       const tab = await ensureFreshFmsTab(setInvoiceStatus);
 
       setInvoiceStatus(nos.length > 1 ? "一起勾选 " + nos.length + " 张账单请款 → 等待10秒 → 上传发票…" : "请款 → 等待10秒 → 上传发票…", "busy");
