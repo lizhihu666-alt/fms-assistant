@@ -1060,6 +1060,15 @@
     ["pending", "待出账"],
   ];
   const TODO_LIMIT = 6;
+  const progressStages = document.getElementById("progressStages");
+  const progressBrands = document.getElementById("progressBrands");
+  const STAGES = [
+    ["PENDING_CONFIRM", "待确认"],
+    ["PENDING_GENERATE_REQUEST", "待生成请款单"],
+    ["PENDING_REQUEST", "待请款"],
+    ["REQUEST_APPROVING", "审批中"],
+    ["PENDING_PAYMENT", "待付款"],
+  ];
 
   function renderProgressCounts(snapshot, operator, shop) {
     // 数字按跟踪表里选的操作人、店铺统计，标明口径
@@ -1067,6 +1076,8 @@
     if (!snapshot) {
       progressTiles.innerHTML = '<p class="empty-note">还没有同步过数据，打开跟踪表同步一次后这里会显示概况。</p>';
       progressList.innerHTML = "";
+      progressStages.innerHTML = "";
+      progressBrands.innerHTML = "";
       return;
     }
     const items = FMSProgress.filterItems(
@@ -1085,7 +1096,7 @@
       ? todo
           .slice(0, TODO_LIMIT)
           .map(
-            (it) => `<li class="todo-item ${it.risk}">
+            (it) => `<li class="todo-item ${it.risk}" role="button" tabindex="0" data-nos="${esc((it.settlementNos || []).join(","))}">
               <div class="todo-main"><span class="todo-name">${esc(it.brandName)} · ${esc(it.month)}</span><span class="todo-stage">${esc(it.stageLabel)}</span></div>
               <div class="todo-reason">${esc(it.reason)}</div>
             </li>`
@@ -1093,7 +1104,54 @@
           .join("") + (todo.length > TODO_LIMIT ? `<li class="todo-more">还有 ${todo.length - TODO_LIMIT} 条，到跟踪表查看</li>` : "")
       : '<li class="todo-empty">暂无需要处理的账单</li>';
 
+    // 处理阶段：每个阶段多少张账单，横条长度按最大值归一
+    const stageCounts = STAGES.map(([k, label]) => [label, items.filter((it) => it.status === k).length]);
+    const maxStage = Math.max(1, ...stageCounts.map((x) => x[1]));
+    progressStages.innerHTML = stageCounts
+      .map(([label, n]) => `<div class="stage-row${n ? "" : " is-zero"}"><span class="stage-name">${label}</span><span class="stage-bar"><i style="width:${Math.round((n / maxStage) * 100)}%"></i></span><span class="stage-n">${n}</span></div>`)
+      .join("");
+
+    // 按品牌：逾期/关注多的排前面
+    const byBrand = new Map();
+    for (const it of items) {
+      if (it.risk === "done") continue;
+      const e = byBrand.get(it.brandName) || { name: it.brandName, total: 0, overdue: 0, warn: 0 };
+      e.total++;
+      if (it.risk === "overdue") e.overdue++;
+      if (it.risk === "warn") e.warn++;
+      byBrand.set(it.brandName, e);
+    }
+    const brands = [...byBrand.values()].sort((a, b) => b.overdue - a.overdue || b.warn - a.warn || b.total - a.total || a.name.localeCompare(b.name));
+    progressBrands.innerHTML = brands.length
+      ? brands
+          .slice(0, 8)
+          .map((b) => `<li class="brand-item"><span class="brand-name">${esc(b.name)}</span><span class="brand-tags">${b.overdue ? `<em class="t-overdue">逾期 ${b.overdue}</em>` : ""}${b.warn ? `<em class="t-warn">关注 ${b.warn}</em>` : ""}<em class="t-total">共 ${b.total}</em></span></li>`)
+          .join("") + (brands.length > 8 ? `<li class="todo-more">还有 ${brands.length - 8} 个品牌，到跟踪表查看</li>` : "")
+      : '<li class="todo-empty">暂无进行中的账单</li>';
+
   }
+
+  // 点「需要处理」里的账单：切到请款流程，把账单号填进第 2 步
+  function openTodo(li) {
+    const nos = (li.dataset.nos || "").trim();
+    if (!nos) return;
+    showTab("flow");
+    const input = document.getElementById("billNoInput");
+    input.value = nos.split(",").join("\n");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.scrollIntoView({ block: "center" });
+  }
+  progressList.addEventListener("click", (e) => {
+    const li = e.target.closest(".todo-item");
+    if (li) openTodo(li);
+  });
+  progressList.addEventListener("keydown", (e) => {
+    const li = e.target.closest(".todo-item");
+    if (li && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      openTodo(li);
+    }
+  });
 
   // 跟踪表里换了操作人/店铺或重新同步后，这一条跟着刷新
   chrome.storage.onChanged.addListener((changes, area) => {

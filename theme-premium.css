@@ -106,3 +106,23 @@ body { background: var(--bg); }
   border-radius: 6px;
 }
 .app-author { font-size: 10.5px; color: var(--ink-400); }
+
+/* 付款进度：处理阶段、按品牌、可点击的待办 */
+.todo-item[role="button"] { cursor: pointer; margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 10px; transition: background 0.15s; }
+.todo-item[role="button"]:hover { background: var(--blue-50); }
+.stage-list { display: flex; flex-direction: column; gap: 10px; }
+.stage-row { display: grid; grid-template-columns: 84px 1fr 28px; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-700); }
+.stage-row.is-zero { color: var(--ink-400); }
+.stage-name { white-space: nowrap; }
+.stage-bar { height: 6px; border-radius: 99px; background: #e9edf5; overflow: hidden; }
+.stage-bar i { display: block; height: 100%; border-radius: 99px; background: var(--blue-500); }
+.stage-n { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--ink-900); }
+.stage-row.is-zero .stage-n { color: var(--ink-400); font-weight: 500; }
+.brand-list { list-style: none; margin: 0; padding: 0; }
+.brand-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.brand-item:last-child { border-bottom: none; }
+.brand-name { font-size: 12.5px; font-weight: 600; color: var(--ink-900); }
+.brand-tags { display: flex; gap: 6px; font-size: 11px; }
+.brand-tags em { font-style: normal; padding: 1px 7px; border-radius: 99px; background: var(--surface-muted); color: var(--ink-500); }
+.brand-tags .t-overdue { background: #fbefed; color: #b3392e; }
+.brand-tags .t-warn { background: #fbf3e4; color: #8a5a12; }
