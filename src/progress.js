@@ -23,7 +23,10 @@ const FMSProgress = (() => {
     shops: ["JUSTFAB", "Justfab EU"],
     // 手动指定「同一个 vendor」：这些店铺下的这几个品牌，在「按 Vendor」视图里并成一行
     // （FMS 的品牌商公司字段没填成同一个时，靠这里补）。品牌名/店铺名不区分大小写和空格。
-    vendorGroups: [{ shop: "Justfab EU", brands: ["Imily Bela", "Runcati"], vendor: "vendor:Justfab EU:Imily Bela+Runcati" }],
+    vendorGroups: [
+      { shop: "Justfab EU", brands: ["Imily Bela", "Runcati"], vendor: "vendor:Justfab EU:Imily Bela+Runcati" },
+      { shop: "JUSTFAB", brands: ["Runcati", "Haloumoning", "Cicy Bell", "Saodimallsu", "YOUSIFY", "Wenrine", "Aoysky", "Imily Bela"], vendor: "vendor:JUSTFAB:Runcati+Haloumoning+Cicy Bell+Saodimallsu+YOUSIFY+Wenrine+Aoysky+Imily Bela" },
+    ],
   };
 
   // "Leo Hu" / "leo.hu" / "Leo.Hu" 都算同一个人
