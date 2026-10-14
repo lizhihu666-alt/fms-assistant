@@ -251,19 +251,28 @@ const BaseDataSync = (() => {
         "关键词输入框"
       );
 
+      // Channel 名形如 justfab-us；页面刚加载时选择器可能还没渲染，所以下面会等它出现。
+      // 大小写、下划线/空格、字母数字混合都认，比较时统一转小写。
+      const chanRe = /^justfab[-_ ]?[a-z0-9]+$/i;
+      const sameCh = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
       const channelEls = () =>
-        [...document.querySelectorAll("*")].filter((e) => e.offsetParent && e.children.length === 0 && /^justfab-[a-z]+$/.test(e.textContent.trim()));
+        [...document.querySelectorAll("*")].filter((e) => e.getClientRects().length > 0 && e.children.length === 0 && chanRe.test(e.textContent.trim()));
+      const selectTexts = () => [...document.querySelectorAll(".ant-select-selection-item")].map((e) => e.textContent.trim()).filter(Boolean).join(" / ");
       async function setChannel(name) {
-        const cur = channelEls()[0];
-        if (!cur) throw new Error("找不到 Channel 选择器");
-        if (cur.textContent.trim() === name) return;
+        let cur;
+        try {
+          cur = await waitFor(() => channelEls()[0], "Channel 选择器", 15000);
+        } catch (e) {
+          throw new Error("找不到 Channel 选择器（页面上的下拉当前显示：" + (selectTexts() || "无") + "）");
+        }
+        if (sameCh(cur.textContent, name)) return;
         const box = cur.closest(".ant-select"); // 在点击之前取，点击后原节点可能被重新渲染
         let el = cur;
         let opt = null;
         for (let depth = 0; el && depth < 6 && !opt; depth++, el = el.parentElement) {
           fire(el);
           await sleep(400);
-          opt = channelEls().find((e) => e !== cur && e.textContent.trim() === name);
+          opt = channelEls().find((e) => e !== cur && sameCh(e.textContent, name));
         }
         if (!opt) throw new Error(`EH 里没有 Channel: ${name}`);
         fire(opt);
@@ -271,8 +280,8 @@ const BaseDataSync = (() => {
         // 标签页在后台时下拉层的收起动画会卡住，下拉里没选中的选项一直留在页面上，
         // 「只剩目标 Channel」就永远不成立（表现为第一次点击总是超时）
         const switched = box
-          ? () => (box.querySelector(".ant-select-selection-item") || box).textContent.includes(name)
-          : () => channelEls().some((e) => e.textContent.trim() === name) && !channelEls().some((e) => e.textContent.trim() !== name);
+          ? () => (box.querySelector(".ant-select-selection-item") || box).textContent.toLowerCase().includes(name.toLowerCase())
+          : () => channelEls().some((e) => sameCh(e.textContent, name)) && !channelEls().some((e) => !sameCh(e.textContent, name));
         await waitFor(switched, "切换Channel: " + name);
         await sleep(600);
         step("已切换 Channel: " + name);
@@ -309,7 +318,7 @@ const BaseDataSync = (() => {
             const spus = await searchSku(mm);
             for (const spu of spus) {
               for (const s of spu.skus || []) {
-                if (s.shop_name && s.shop_name !== job.channel) continue;
+                if (s.shop_name && !sameCh(s.shop_name, job.channel)) continue;
                 const markets = Array.isArray(s.markets) ? s.markets : typeof s.markets === "string" ? JSON.parse(s.markets) : [];
                 const m = markets.find((x) => x && x.cost_amount != null && x.cost_amount !== "") || markets[0] || {};
                 res.skus[s.mm_sku_code] = { seller: s.seller_sku_code || "", cost: m.cost_amount == null ? "" : m.cost_amount, currency: m.cost_currency || m.currency || "" };
