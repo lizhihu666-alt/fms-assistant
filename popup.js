@@ -1060,15 +1060,7 @@
     ["pending", "待出账"],
   ];
   const TODO_LIMIT = 6;
-  const progressStages = document.getElementById("progressStages");
   const progressBrands = document.getElementById("progressBrands");
-  const STAGES = [
-    ["PENDING_CONFIRM", "待确认"],
-    ["PENDING_GENERATE_REQUEST", "待生成请款单"],
-    ["PENDING_REQUEST", "待请款"],
-    ["REQUEST_APPROVING", "审批中"],
-    ["PENDING_PAYMENT", "待付款"],
-  ];
 
   function renderProgressCounts(snapshot, operator, shop) {
     // 数字按跟踪表里选的操作人、店铺统计，标明口径
@@ -1076,7 +1068,6 @@
     if (!snapshot) {
       progressTiles.innerHTML = '<p class="empty-note">还没有同步过数据，打开跟踪表同步一次后这里会显示概况。</p>';
       progressList.innerHTML = "";
-      progressStages.innerHTML = "";
       progressBrands.innerHTML = "";
       return;
     }
@@ -1103,13 +1094,6 @@
           )
           .join("") + (todo.length > TODO_LIMIT ? `<li class="todo-more">还有 ${todo.length - TODO_LIMIT} 条，到跟踪表查看</li>` : "")
       : '<li class="todo-empty">暂无需要处理的账单</li>';
-
-    // 处理阶段：每个阶段多少张账单，横条长度按最大值归一
-    const stageCounts = STAGES.map(([k, label]) => [label, items.filter((it) => it.status === k).length]);
-    const maxStage = Math.max(1, ...stageCounts.map((x) => x[1]));
-    progressStages.innerHTML = stageCounts
-      .map(([label, n]) => `<div class="stage-row${n ? "" : " is-zero"}"><span class="stage-name">${label}</span><span class="stage-bar"><i style="width:${Math.round((n / maxStage) * 100)}%"></i></span><span class="stage-n">${n}</span></div>`)
-      .join("");
 
     // 按品牌：逾期/关注多的排前面
     const byBrand = new Map();
