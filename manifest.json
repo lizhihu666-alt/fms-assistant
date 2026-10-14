@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "FMS付款助手",
+  "version": "0.9.12",
+  "description": "自动清洗FMS品牌商账单、下载对账文件、请款并上传发票，最后留待人工核查提交",
+  "author": "Leo Hu",
+  "action": {
+    "default_title": "FMS付款助手",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "popup.html" },
+  "permissions": ["scripting", "tabs", "storage", "sidePanel"],
+  "host_permissions": [
+    "https://fms-jf.wangoon.cn/*",
+    "https://admin.engagehub.tsostech.com/*",
+    "https://jf-fms-s3.s3.us-west-2.amazonaws.com/*"
+  ]
+}

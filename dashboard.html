@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>付款进度跟踪表 · FMS付款助手</title>
+<link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-brand">
+        <img class="topbar-icon" src="icons/icon48.png" alt="" />
+        <h1>付款进度跟踪表</h1>
+      </div>
+      <div class="topbar-actions">
+        <button id="syncBtn" type="button" class="btn btn-primary">同步最新进度</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div id="notice" class="notice" hidden></div>
+
+    <section id="emptyState" class="empty" hidden>
+      <h2>还没有数据</h2>
+      <p>点右上角「同步最新进度」，插件会在后台打开 FMS 读取账单和审批进度（只读，不会改动任何单据）。<br />需要你的浏览器里已经登录 FMS。</p>
+    </section>
+
+    <div id="content" hidden>
+      <div class="operator-bar">
+        <label class="op-select">
+          <span>操作人</span>
+          <select id="operatorSelect"></select>
+        </label>
+        <label class="op-select">
+          <span>店铺</span>
+          <select id="shopSelect"></select>
+        </label>
+      </div>
+
+      <section class="summary" id="summary" aria-label="风险概览"></section>
+
+      <div class="view-bar">
+        <div class="view-tools">
+        <div class="segmented" id="viewSeg" role="tablist">
+          <button id="tabMatrix" type="button" class="seg active" data-view="matrix" role="tab">进度矩阵</button>
+          <button id="tabNudge" type="button" class="seg" data-view="nudge" role="tab">催办清单</button>
+        </div>
+        <div class="segmented" id="groupSeg" aria-label="矩阵分组方式">
+          <button type="button" class="seg active" data-group="brand">按品牌</button>
+          <button type="button" class="seg" data-group="vendor">按 Vendor</button>
+        </div>
+      </div>
+        <p class="view-hint" id="viewHint"></p>
+      </div>
+
+      <section id="matrixView" class="card"></section>
+      <section id="nudgeView" class="nudge-list" hidden></section>
+      <section id="detail" class="card detail" hidden></section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="src/progress.js"></script>
+  <script src="src/fmsSync.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

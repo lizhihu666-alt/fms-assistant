@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>FMS付款助手</title>
+<link rel="stylesheet" href="popup.css" />
+<link rel="stylesheet" href="theme-premium.css" />
+</head>
+<body>
+  <header class="app-header">
+    <img class="app-icon" src="icons/icon48.png" alt="" />
+    <div>
+      <h1>FMS付款助手</h1>
+      <p class="subtitle">生成账单 · 补充数据 · 清洗对账 · 一键请款</p>
+    </div>
+    <div class="app-meta">
+      <span id="appVersion" class="app-version"></span>
+      <span class="app-author">Created by Leo Hu</span>
+    </div>
+  </header>
+
+  <main>
+    <nav class="main-tabs" role="tablist" aria-label="功能切换">
+      <button type="button" class="main-tab" data-tab="progress" role="tab" aria-selected="false">付款进度</button>
+      <button type="button" class="main-tab is-active" data-tab="flow" role="tab" aria-selected="true">请款流程</button>
+    </nav>
+
+    <section id="tabFlow" class="tab-panel" role="tabpanel">
+    <p id="flowGuide" class="flow-guide"></p>
+
+    <ol class="steps">
+      <!-- 1 生成账单 -->
+      <li id="stepGen" class="step-card" data-state="active">
+        <div class="step-card-head">
+          <span class="step-badge">1</span>
+          <div class="step-card-title">
+            <span class="step-name">生成账单</span>
+            <span id="stepGenSub" class="step-sub"></span>
+          </div>
+          <span class="step-state"></span>
+        </div>
+        <div class="step-card-body">
+          <div class="seg" id="genMode" role="tablist" aria-label="生成方式">
+            <button type="button" class="seg-btn is-active" data-mode="brand" role="tab" aria-selected="true">按品牌</button>
+            <button type="button" class="seg-btn" data-mode="vendor" role="tab" aria-selected="false">按 Vendor</button>
+          </div>
+          <div id="genBrandBox" class="field-block">
+            <label for="genBrand" class="field-label">品牌</label>
+            <select id="genBrand" class="text-input"></select>
+          </div>
+          <div id="genVendorBox" hidden>
+            <div class="field-block">
+              <div class="field-label-row">
+                <label for="genVendor" class="field-label">Vendor</label>
+                <button id="genVendorRefresh" type="button" class="ghost-link">刷新清单</button>
+              </div>
+              <!-- 浏览器自带的下拉没法把一行文字里的店铺单独标红，所以这里用自己画的下拉；
+                   隐藏的 select 只负责存值，页面逻辑照旧读它 -->
+              <select id="genVendor" hidden></select>
+              <div class="vsel" id="genVendorSel">
+                <button type="button" id="genVendorBtn" class="text-input vsel-btn" aria-haspopup="listbox" aria-expanded="false"></button>
+                <ul id="genVendorList" class="vsel-list" role="listbox" hidden></ul>
+              </div>
+            </div>
+            <div class="field-block">
+              <span class="field-label">包含的品牌（取消勾选的不生成）</span>
+              <div id="genVendorBrands" class="brand-checks"></div>
+            </div>
+          </div>
+          <div class="gen-row">
+            <div id="genShopBlock" class="field-block">
+              <label for="genShop" class="field-label">店铺</label>
+              <select id="genShop" class="text-input"></select>
+            </div>
+            <div class="field-block">
+              <label for="genMonth" class="field-label">结算月份</label>
+              <input id="genMonth" type="month" class="text-input" />
+            </div>
+          </div>
+          <button id="genBtn" class="btn btn-primary btn-full" type="button">生成账单</button>
+          <div id="genStatus" class="status" hidden></div>
+        </div>
+        </li>
+
+      <!-- 2 账单状态验证 -->
+      <li id="stepVerify" class="step-card" data-state="active">
+        <div class="step-card-head">
+          <span class="step-badge">2</span>
+          <div class="step-card-title">
+            <span class="step-name">账单状态验证</span>
+            <span id="stepVerifySub" class="step-sub"></span>
+          </div>
+          <span class="step-state"></span>
+        </div>
+        <div class="step-card-body">
+          <div class="field-label-row">
+            <label for="billNoInput" class="field-label">账单编号</label>
+            <button id="resetBtn" type="button" class="ghost-link" title="清空账单编号和发票">清空全部</button>
+          </div>
+          <div class="bill-row">
+            <textarea id="billNoInput" rows="2" class="text-input" placeholder="生成后自动填入；已有账单直接输入编号，多张用换行分隔"></textarea>
+          </div>
+          <div class="bill-meta">
+            <span id="billChip" class="bill-chip" data-kind="none">未生成</span>
+            <span id="billHint" class="bill-hint"></span>
+          </div>
+          <ul id="billList" class="bill-list" hidden></ul>
+        </div>
+      </li>
+
+
+      <!-- 2 补充数据 -->
+      <li id="stepBase" class="step-card" data-state="locked">
+        <div class="step-card-head">
+          <span class="step-badge">3</span>
+          <div class="step-card-title">
+            <span class="step-name">补充数据</span>
+            <span id="stepBaseSub" class="step-sub"></span>
+          </div>
+          <span class="step-state"></span>
+        </div>
+        <div class="step-card-body">
+          <button id="baseBtn" type="button" class="btn btn-primary btn-full" disabled>生成基础数据导入文件</button>
+
+          <div id="baseStatus" class="status" hidden></div>
+          <a id="baseDownload" class="file-chip file-chip-link" hidden download>
+            <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 4v11m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span id="baseDownloadText" class="file-chip-name">下载基础数据模板</span>
+          </a>
+          <div id="baseUnresolved" class="status error" hidden></div>
+          <div id="baseImportBox" hidden>
+            <button id="baseImportBtn" class="btn btn-primary btn-full" type="button">确认无误，一键导入 FMS</button>
+            <button id="baseImportOwnBtn" class="ghost-link import-own" type="button">我改过模板，改为选择文件导入…</button>
+            <input id="baseImportFile" type="file" accept=".xlsx" hidden>
+          </div>
+          <div id="baseImportStatus" class="status" hidden></div>
+          <button id="skipImportBtn" type="button" class="ghost-link import-own">模板已经导入过了，直接下一步</button>
+        </div>
+      </li>
+
+      <!-- 3 重新生成 -->
+      <li id="stepRegen" class="step-card" data-state="locked">
+        <div class="step-card-head">
+          <span class="step-badge">4</span>
+          <div class="step-card-title">
+            <span class="step-name">重新生成账单</span>
+            <span id="stepRegenSub" class="step-sub"></span>
+          </div>
+          <span class="step-state"></span>
+        </div>
+        <div class="step-card-body">
+          <button id="regenBtn" type="button" class="btn btn-primary btn-full">重新生成账单</button>
+          <div id="regenStatus" class="status" hidden></div>
+        </div>
+      </li>
+
+      <!-- 4 下载清洗 -->
+      <li id="stepClean" class="step-card" data-state="locked">
+        <div class="step-card-head">
+          <span class="step-badge">5</span>
+          <div class="step-card-title">
+            <span class="step-name">下载并清洗对账表</span>
+            <span id="stepCleanSub" class="step-sub"></span>
+          </div>
+          <span class="step-state"></span>
+        </div>
+        <div class="step-card-body">
+          <p class="card-note">用清洗后的表格跟商家对账。不需要对账可以跳过这一步，直接做第 6 步。</p>
+          <button id="step1Btn" type="button" class="btn btn-outline btn-full" disabled>下载并清洗对账表</button>
+          <div id="cleanStatus" class="status" hidden></div>
+          <div id="invoiceDownloadLink" class="download-list" hidden>
+            <a id="cleanDlZh" class="file-chip file-chip-link" download>
+              <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 4v11m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+              <span id="cleanDlZhText" class="file-chip-name">中文版</span>
+            </a>
+            <a id="cleanDlEn" class="file-chip file-chip-link" download>
+              <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 4v11m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+              <span id="cleanDlEnText" class="file-chip-name">English</span>
+            </a>
+          </div>
+        </div>
+      </li>
+
+      <!-- 5 上传发票并请款 -->
+      <li id="stepInvoice" class="step-card" data-state="locked">
+        <div class="step-card-head">
+          <span class="step-badge">6</span>
+          <div class="step-card-title">
+            <span class="step-name">上传发票并请款</span>
+            <span id="stepInvoiceSub" class="step-sub"></span>
+          </div>
+          <span class="step-state"></span>
+        </div>
+        <div class="step-card-body">
+          <div class="field-block">
+            <label class="field-label">发票文件</label>
+
+            <div id="invoiceDropzone" class="upload-zone">
+              <svg class="upload-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 4v11m0-11 4 4m-4-4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <p class="upload-text">点击或拖拽上传发票文件</p>
+              <input id="invoiceFileInput" type="file" accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.pdf,.zip,.rar,.ofd,.eml,.csv" hidden />
+            </div>
+
+            <div id="invoiceFileChip" class="file-chip" hidden>
+              <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M14 3v5h5" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+              <span id="invoiceFileName" class="file-chip-name"></span>
+              <button id="invoiceFileRemove" type="button" class="file-chip-remove" aria-label="移除发票文件">✕</button>
+            </div>
+          </div>
+
+          <button id="step2Btn" type="button" class="btn btn-outline btn-full" disabled>请款并上传发票</button>
+          <p class="card-note stop-note">插件只会保存为草稿，不会提交；请到 FMS 人工核查后自己点「提交」。</p>
+          <div id="invoiceStatus" class="status" hidden></div>
+        </div>
+      </li>
+    </ol>
+    </section>
+
+    <section id="tabProgress" class="tab-panel" role="tabpanel" hidden>
+      <div class="flow-card progress-card">
+        <h2 class="flow-title scope-title">账单概况<span id="progressScope" class="progress-scope"></span></h2>
+        <div id="progressTiles" class="stat-grid"></div>
+      </div>
+
+      <div class="flow-card progress-card">
+        <h2 class="flow-title">需要处理</h2>
+        <ul id="progressList" class="todo-list"></ul>
+      </div>
+
+      <button id="openDashboardBtn" type="button" class="btn btn-primary btn-full">打开付款进度跟踪表</button>
+    </section>
+
+  </main>
+
+  <script src="libs/xlsx.full.min.js"></script>
+  <script src="libs/exceljs.min.js"></script>
+  <script src="src/progress.js"></script>
+  <script src="src/cleaner.js"></script>
+  <script src="src/fmsAutomation.js"></script>
+  <script src="src/billGen.js"></script>
+  <script src="src/baseData.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

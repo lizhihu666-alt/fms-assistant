@@ -1,0 +1,108 @@
+/* 设计预览 v2：保留原来的蓝白配色，只精修细节 */
+
+:root {
+  --blue-600: #1f4fd6;
+  --blue-500: #3a68e0;
+  --blue-100: #d3def8;
+  --blue-50: #f0f4fe;
+  --bg: #f3f5f9;
+  --line: #e8ebf1;
+  --shadow-s: 0 1px 2px rgba(20, 35, 70, 0.04), 0 2px 6px rgba(20, 35, 70, 0.04);
+  --shadow-m: 0 2px 4px rgba(31, 79, 214, 0.06), 0 8px 20px rgba(31, 79, 214, 0.1);
+}
+
+body { background: var(--bg); }
+
+/* 顶部：去掉蓝色大块，改成和页面融为一体的浅色标题区 */
+.app-header {
+  padding: 18px 18px 6px;
+  gap: 12px;
+  background: transparent;
+  color: var(--ink-900);
+}
+.app-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(20, 35, 70, 0.12), 0 4px 10px rgba(31, 79, 214, 0.18);
+}
+.app-header h1 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--ink-900);
+}
+.subtitle {
+  margin-top: 3px;
+  font-size: 11.5px;
+  letter-spacing: 0.3px;
+  color: var(--ink-500);
+}
+
+/* 标签 */
+.main-tabs { background: #e4e9f2; padding: 3px; border-radius: 11px; }
+.main-tab { border-radius: 9px; }
+.main-tab.is-active { box-shadow: 0 1px 3px rgba(20, 35, 70, 0.12); }
+
+/* 卡片：更干净的白底 + 细边，当前步骤用蓝色光晕而不是粗描边 */
+.step-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-s);
+}
+.step-card[data-state="active"] {
+  border-color: var(--blue-500);
+  box-shadow: var(--shadow-m);
+}
+.step-card[data-state="locked"] { border: 1px dashed #d5dbe6; }
+
+/* 步骤编号：圆更大一点，未解锁用空心 */
+.step-badge { width: 22px; height: 22px; }
+.step-card[data-state="active"] .step-badge { background: var(--blue-600); }
+.step-card[data-state="skipped"] .step-badge,
+.step-card[data-state="locked"] .step-badge {
+  color: var(--ink-500);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px #cdd4e0;
+}
+.step-card[data-state="active"] .step-sub { color: var(--blue-600); }
+
+/* 输入框、按钮：圆角和高度统一 */
+.text-input { border-radius: 10px; background: #f6f8fb; }
+.text-input:focus { box-shadow: 0 0 0 3px rgba(31, 79, 214, 0.12); }
+.btn { border-radius: 10px; }
+.btn-primary { box-shadow: 0 4px 12px rgba(31, 79, 214, 0.28); }
+.btn-outline { background: #fff; border: 1px solid var(--blue-100); }
+.btn-outline:hover:not(:disabled) { background: var(--blue-50); }
+
+/* 引导语：去掉整块蓝底，改成浅底 + 细边 */
+.flow-guide {
+  background: var(--blue-50);
+  border: 1px solid var(--blue-100);
+  border-radius: 11px;
+}
+
+/* 付款进度页：数字更大更轻 */
+.stat-tile { padding: 12px 4px 10px; border-radius: 11px; }
+.stat-num { font-size: 21px; font-weight: 600; letter-spacing: -0.3px; }
+.stat-label { letter-spacing: 0.4px; }
+
+/* 顶部右侧：版本号胶囊 + 作者 */
+.app-header > div:first-of-type { flex: 1 1 auto; min-width: 0; }
+.app-meta {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+.app-version {
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--ink-500);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.app-author { font-size: 10.5px; color: var(--ink-400); }
