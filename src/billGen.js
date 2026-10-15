@@ -23,6 +23,67 @@ const BillGen = (() => {
   }
 
   /**
+   * 页面注入：打开「账单生成」弹窗，读品牌下拉里的全部选项，然后关掉弹窗（不提交、不改任何数据）。
+   * 返回 { ok, brands, log }。
+   */
+  async function listBrands() {
+    const log = [];
+    const step = (m) => log.push(m);
+    try {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function waitFor(fn, label, timeoutMs = 15000, intervalMs = 200) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const v = fn();
+          if (v) return v;
+          await sleep(intervalMs);
+        }
+        throw new Error("等待超时: " + label);
+      }
+      const visible = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+      const fire = (el) =>
+        ["mousedown", "mouseup", "click"].forEach((t) =>
+          el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }))
+        );
+      const labelOf = (dlg, text) =>
+        [...dlg.querySelectorAll(".el-form-item")].find((f) => {
+          const l = f.querySelector("label");
+          return l && l.textContent.trim() === text;
+        });
+
+      const genBtn = await waitFor(
+        () => [...document.querySelectorAll("button")].find((b) => visible(b) && b.textContent.trim() === "账单生成"),
+        "账单生成按钮"
+      );
+      genBtn.click();
+      const dlg = await waitFor(() => {
+        const d = [...document.querySelectorAll(".el-dialog")].filter(visible).pop();
+        return d && labelOf(d, "品牌") ? d : null;
+      }, "账单生成弹窗");
+      step("已打开账单生成弹窗");
+
+      fire(labelOf(dlg, "品牌").querySelector(".el-select__wrapper"));
+      const items = () => [...document.querySelectorAll(".el-select-dropdown__item")].filter(visible);
+      await waitFor(() => items().length > 0, "品牌下拉选项");
+      await sleep(400); // 选项可能分批渲染，稍等一下再读
+      const brands = [...new Set(items().map((o) => o.textContent.trim()).filter(Boolean))];
+      step("读到 " + brands.length + " 个品牌");
+
+      // 收起下拉、关弹窗：点弹窗的取消/关闭，什么都不提交
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+      await sleep(300);
+      const cancel =
+        [...dlg.querySelectorAll(".el-dialog__footer button")].find((b) => /取消|关闭/.test(b.textContent.trim())) ||
+        dlg.querySelector(".el-dialog__headerbtn");
+      if (cancel) cancel.click();
+      return { ok: true, brands, log };
+    } catch (err) {
+      console.error("[读取品牌] 失败:", err);
+      return { ok: false, error: (err && err.message) || String(err), log };
+    }
+  }
+
+  /**
    * 页面注入：点「账单生成」→ 填品牌/店铺/结算月份 → 点「确认」。
    * 返回 { ok, messages, log }；账单编号由调用方再去列表里查。
    */
@@ -245,7 +306,7 @@ const BillGen = (() => {
     }
   }
 
-  return { BRANDS, SHOPS, findBills, generateBill, regenerateBill };
+  return { BRANDS, SHOPS, findBills, generateBill, regenerateBill, listBrands };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = BillGen;

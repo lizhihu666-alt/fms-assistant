@@ -375,6 +375,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg && msg.type === "brands:refresh") {
+    // 读 FMS「账单生成」弹窗里品牌下拉的全部选项（FMS 新增品牌后，这里能同步到），存起来给面板的品牌下拉用
+    (async () => {
+      try {
+        const r = await withBackgroundTab(
+          FMSSync.FMS_BILL_URL,
+          "FMS",
+          (tabId) => runStep(tabId, BillGen.listBrands, [], "读取品牌清单"),
+          { foreground: true }
+        );
+        if (!r.brands || !r.brands.length) throw new Error("没有读到品牌");
+        await chrome.storage.local.set({ brandList: { at: Date.now(), brands: r.brands } });
+        sendResponse({ ok: true, count: r.brands.length });
+      } catch (err) {
+        console.error(err);
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
   if (msg && msg.type === "vendors:refresh") {
     // 读一遍 FMS 账单列表，只留「品牌 / 品牌商公司 / 店铺」，用来列出每个 vendor 下有哪些品牌
     (async () => {

@@ -614,7 +614,43 @@
   let vendors = [];
   let savedVendorId = "";
 
-  genBrand.innerHTML = '<option value="">请选择品牌</option>' + BillGen.BRANDS.map((b) => '<option value="' + escHtml(b) + '">' + escHtml(b) + "</option>").join("");
+  // 品牌清单：优先用从 FMS 读回来的（点「刷新品牌」），没读过就用内置的
+  let brandList = BillGen.BRANDS.slice();
+  function renderBrandOptions() {
+    const cur = genBrand.value;
+    genBrand.innerHTML = '<option value="">请选择品牌</option>' + brandList.map((b) => '<option value="' + escHtml(b) + '">' + escHtml(b) + "</option>").join("");
+    if (cur && brandList.includes(cur)) genBrand.value = cur;
+  }
+  renderBrandOptions();
+  chrome.storage.local.get("brandList", (r) => {
+    if (r.brandList && r.brandList.brands && r.brandList.brands.length) {
+      brandList = r.brandList.brands.slice();
+      renderBrandOptions();
+      renderVendorBrands();
+    }
+  });
+  const genBrandRefresh = document.getElementById("genBrandRefresh");
+  genBrandRefresh.addEventListener("click", async () => {
+    genBrandRefresh.disabled = true;
+    genBrandRefresh.textContent = "读取中…";
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({ type: "brands:refresh" });
+    } catch (e) {
+      res = null;
+    }
+    genBrandRefresh.disabled = false;
+    if (res && res.ok) {
+      const stored = await chrome.storage.local.get("brandList");
+      brandList = stored.brandList.brands.slice();
+      renderBrandOptions();
+      renderVendorBrands();
+      genBrandRefresh.textContent = "已更新 " + res.count + " 个";
+      setTimeout(() => (genBrandRefresh.textContent = "刷新品牌"), 2500);
+    } else {
+      genBrandRefresh.textContent = "读取失败，点击重试";
+    }
+  });
   genShop.innerHTML = BillGen.SHOPS.map((s) => '<option value="' + escHtml(s) + '">' + escHtml(s) + "</option>").join("");
   {
     // 默认上个月（一般是生成上个月的账单）
@@ -663,7 +699,7 @@
     genVendorBrands.innerHTML = v
       ? v.brands
           .map((b) => {
-            const known = BillGen.BRANDS.some((x) => x.toLowerCase() === b.toLowerCase());
+            const known = brandList.some((x) => x.toLowerCase() === b.toLowerCase());
             return `<label class="brand-check"><input type="checkbox" value="${escHtml(b)}" checked><span>${escHtml(b)}</span>${known ? "" : "<em>FMS 下拉里暂无，可能生成失败</em>"}</label>`;
           })
           .join("")
