@@ -403,7 +403,7 @@
       return;
     }
     const wasImported = flow.imported;
-    const bills = (res.bills || []).map((b) => ({ billNo: b.billNo, brand: b.brand || "", status: b.status }));
+    const bills = (res.bills || []).map((b) => ({ billNo: b.billNo, brand: b.brand || "", status: b.status, month: b.month || "" }));
     const stillPending = bills.filter((b) => b.status === "PENDING_CONFIRM");
     if (stillPending.length) {
       setRegenStatus(
@@ -596,16 +596,21 @@
 
       setInvoiceStatus(nos.length > 1 ? "一起勾选 " + nos.length + " 张账单请款 → 等待10秒 → 上传发票…" : "请款 → 等待10秒 → 上传发票…", "busy");
       const invoiceBase64 = await fileToBase64(invoiceFile);
-      const args = [invoiceFile.name, invoiceFile.type, invoiceBase64];
+      // 报账明细里的「业务发生日期」要填所开月份的第一天；多张账单取最早的月份
+      const months = (flow.bills || []).map((b) => b.month).filter((m) => /^\d{4}-\d{2}$/.test(m || "")).sort();
+      const args = [invoiceFile.name, invoiceFile.type, invoiceBase64, months[0] || ""];
       const step2 =
         nos.length > 1
           ? await runStep(tab.id, FMSAutomation.submitInvoiceMulti, [nos, ...args], "请款并上传发票")
           : await runStep(tab.id, FMSAutomation.submitInvoiceAndConfirm, [nos[0], ...args], "请款并上传发票");
 
+      const warn = [];
+      if (step2.lineCount > 1) warn.push(`注意：这张请款单的报账明细有 ${step2.lineCount} 行，发票只附在了第一行，请核对其余行是否也需要附件。`);
+      if (step2.dateNote) warn.push(step2.dateNote);
       setInvoiceStatus(
         `请款完成：${nos.length > 1 ? nos.length + " 张账单合并成请款单 " : "请款单 "}${step2.ajfNo} 已附上发票，保存为草稿。请到 FMS 核对后，自己点「提交」。` +
-          (step2.lineCount > 1 ? `\n注意：这张请款单的报账明细有 ${step2.lineCount} 行，发票只附在了第一行，请核对其余行是否也需要附件。` : ""),
-        step2.lineCount > 1 ? "" : "ok"
+          (warn.length ? "\n" + warn.join("\n") : ""),
+        warn.length ? "" : "ok"
       );
       setFlow({ requested: true });
     } catch (err) {

@@ -222,7 +222,7 @@ const FMSAutomation = (() => {
    *
    * 已在真实账单（SET202609170002 / AJF2026091700012）上手动验证过整条链路可以跑通。
    */
-  async function submitInvoiceAndConfirm(billNo, invoiceFileName, invoiceMimeType, invoiceBase64) {
+  async function submitInvoiceAndConfirm(billNo, invoiceFileName, invoiceMimeType, invoiceBase64, billMonth) {
     const log = [];
     const step = (msg) => {
       log.push(msg);
@@ -399,6 +399,64 @@ const FMSAutomation = (() => {
       }, "报账明细编辑弹窗");
       const fileInput = await waitFor(() => dialog.querySelector('input[type="file"]'), "弹窗内的文件输入框");
 
+      // 业务发生日期：FMS 默认填的是请款当天，这里改成所开月份的第一天（如 9 月账单 → 2026-09-01）。
+      // 设置失败不中断（后面还要传发票、存草稿），把原因带回去提示用户人工改。
+      let dateNote = "";
+      if (billMonth && /^\d{4}-\d{2}$/.test(billMonth)) {
+        const want = billMonth + "-01";
+        try {
+          const dItem = [...dialog.querySelectorAll(".el-form-item")].find((f) => {
+            const l = f.querySelector("label");
+            return l && l.textContent.trim() === "业务发生日期";
+          });
+          const dInp = dItem && dItem.querySelector("input");
+          if (!dInp) throw new Error("没找到业务发生日期输入框");
+          if (dInp.value !== want) {
+            // 先正常点开日期面板；不弹才往输入框里敲字把它唤出来（敲进去的字不能当成「已选好」）
+            ["mousedown", "mouseup", "click"].forEach((t) => dInp.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })));
+            dInp.focus();
+            const openPanel = () => [...document.querySelectorAll(".el-picker-panel")].filter((p) => p.getClientRects().length > 0).pop();
+            let dPanel = await waitFor(openPanel, "日期面板", 1500).catch(() => null);
+            if (!dPanel) {
+              Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(dInp, want);
+              dInp.dispatchEvent(new Event("input", { bubbles: true }));
+              dPanel = await waitFor(openPanel, "日期面板", 4000);
+            }
+            // 面板停在哪个月不一定（默认是当前选中日期所在的月），翻到目标年月再点 1 号
+            const [wy, wm] = want.split("-").map(Number);
+            const shown = () => {
+              const labels = [...dPanel.querySelectorAll(".el-date-picker__header-label")].map((l) => parseInt((l.textContent.match(/\d+/) || [0])[0], 10));
+              return { y: labels[0], m: labels[1] };
+            };
+            const press = (cls, aria) => {
+              const b = dPanel.querySelector("button." + cls) || dPanel.querySelector('button[aria-label="' + aria + '"]');
+              if (!b) throw new Error("日期面板找不到翻页按钮");
+              b.click();
+            };
+            for (let i = 0; i < 60; i++) {
+              const { y, m } = shown();
+              if (!y || !m) throw new Error("读不到日期面板当前的年月");
+              if (y === wy && m === wm) break;
+              if (y !== wy) press(y > wy ? "d-arrow-left" : "d-arrow-right", y > wy ? "前一年" : "后一年");
+              else press(m > wm ? "arrow-left" : "arrow-right", m > wm ? "上个月" : "下个月");
+              await sleep(120);
+            }
+            const dCell = await waitFor(
+              () => [...dPanel.querySelectorAll("td.available:not(.prev-month):not(.next-month)")].find((td) => td.textContent.trim() === "1"),
+              "日期面板里的 1 号",
+              3000
+            );
+            dCell.click();
+            await sleep(500); // 等页面把选中的日期写回输入框，再核对
+            if (dInp.value !== want) throw new Error("选完之后日期是 " + dInp.value);
+          }
+          step("业务发生日期已设为 " + want);
+        } catch (e) {
+          dateNote = "业务发生日期没能自动设成 " + want + "（" + ((e && e.message) || e) + "），请在 FMS 里手动改一下";
+          step(dateNote);
+        }
+      }
+
       const byteChars = atob(invoiceBase64);
       const byteNumbers = new Array(byteChars.length);
       for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
@@ -458,7 +516,7 @@ const FMSAutomation = (() => {
       );
       step("弹窗已关闭，确认保存成功");
 
-      return { ok: true, ajfNo, log };
+      return { ok: true, ajfNo, dateNote, log };
     } catch (err) {
       console.error("[FMS一键请款] 失败:", err);
       return { ok: false, error: (err && err.message) || String(err), log };
@@ -476,7 +534,7 @@ const FMSAutomation = (() => {
    *  - 请款后如果 FMS 没有把它们合并成同一张费控单，中止并说明，不替用户猜怎么处理；
    *  - 报账明细里如果有多行「第三方品牌结算」，发票只附在第一行，并把行数返回，让界面提醒人工核对。
    */
-  async function submitInvoiceMulti(billNos, invoiceFileName, invoiceMimeType, invoiceBase64) {
+  async function submitInvoiceMulti(billNos, invoiceFileName, invoiceMimeType, invoiceBase64, billMonth) {
     const log = [];
     const step = (msg) => {
       log.push(msg);
@@ -641,6 +699,64 @@ const FMSAutomation = (() => {
       }, "报账明细编辑弹窗");
       const fileInput = await waitFor(() => dialog.querySelector('input[type="file"]'), "弹窗内的文件输入框");
 
+      // 业务发生日期：FMS 默认填的是请款当天，这里改成所开月份的第一天（如 9 月账单 → 2026-09-01）。
+      // 设置失败不中断（后面还要传发票、存草稿），把原因带回去提示用户人工改。
+      let dateNote = "";
+      if (billMonth && /^\d{4}-\d{2}$/.test(billMonth)) {
+        const want = billMonth + "-01";
+        try {
+          const dItem = [...dialog.querySelectorAll(".el-form-item")].find((f) => {
+            const l = f.querySelector("label");
+            return l && l.textContent.trim() === "业务发生日期";
+          });
+          const dInp = dItem && dItem.querySelector("input");
+          if (!dInp) throw new Error("没找到业务发生日期输入框");
+          if (dInp.value !== want) {
+            // 先正常点开日期面板；不弹才往输入框里敲字把它唤出来（敲进去的字不能当成「已选好」）
+            ["mousedown", "mouseup", "click"].forEach((t) => dInp.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })));
+            dInp.focus();
+            const openPanel = () => [...document.querySelectorAll(".el-picker-panel")].filter((p) => p.getClientRects().length > 0).pop();
+            let dPanel = await waitFor(openPanel, "日期面板", 1500).catch(() => null);
+            if (!dPanel) {
+              Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(dInp, want);
+              dInp.dispatchEvent(new Event("input", { bubbles: true }));
+              dPanel = await waitFor(openPanel, "日期面板", 4000);
+            }
+            // 面板停在哪个月不一定（默认是当前选中日期所在的月），翻到目标年月再点 1 号
+            const [wy, wm] = want.split("-").map(Number);
+            const shown = () => {
+              const labels = [...dPanel.querySelectorAll(".el-date-picker__header-label")].map((l) => parseInt((l.textContent.match(/\d+/) || [0])[0], 10));
+              return { y: labels[0], m: labels[1] };
+            };
+            const press = (cls, aria) => {
+              const b = dPanel.querySelector("button." + cls) || dPanel.querySelector('button[aria-label="' + aria + '"]');
+              if (!b) throw new Error("日期面板找不到翻页按钮");
+              b.click();
+            };
+            for (let i = 0; i < 60; i++) {
+              const { y, m } = shown();
+              if (!y || !m) throw new Error("读不到日期面板当前的年月");
+              if (y === wy && m === wm) break;
+              if (y !== wy) press(y > wy ? "d-arrow-left" : "d-arrow-right", y > wy ? "前一年" : "后一年");
+              else press(m > wm ? "arrow-left" : "arrow-right", m > wm ? "上个月" : "下个月");
+              await sleep(120);
+            }
+            const dCell = await waitFor(
+              () => [...dPanel.querySelectorAll("td.available:not(.prev-month):not(.next-month)")].find((td) => td.textContent.trim() === "1"),
+              "日期面板里的 1 号",
+              3000
+            );
+            dCell.click();
+            await sleep(500); // 等页面把选中的日期写回输入框，再核对
+            if (dInp.value !== want) throw new Error("选完之后日期是 " + dInp.value);
+          }
+          step("业务发生日期已设为 " + want);
+        } catch (e) {
+          dateNote = "业务发生日期没能自动设成 " + want + "（" + ((e && e.message) || e) + "），请在 FMS 里手动改一下";
+          step(dateNote);
+        }
+      }
+
       const byteChars = atob(invoiceBase64);
       const byteNumbers = new Array(byteChars.length);
       for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
@@ -678,7 +794,7 @@ const FMSAutomation = (() => {
       await waitFor(() => dialog.offsetParent === null || !document.body.contains(dialog), "弹窗关闭确认保存成功", 8000);
       step("弹窗已关闭，确认保存成功");
 
-      return { ok: true, ajfNo, lineCount: lines.length, billCount: wanted.length, log };
+      return { ok: true, ajfNo, dateNote, lineCount: lines.length, billCount: wanted.length, log };
     } catch (err) {
       console.error("[FMS一键请款·多账单] 失败:", err);
       return { ok: false, error: (err && err.message) || String(err), log };
