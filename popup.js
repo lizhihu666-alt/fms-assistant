@@ -433,18 +433,37 @@
    * 缓存的组件状态（比如上一次搜索过的账单号），导致自动化操作到错误的账单——
    * 这是真实发生过的事故，这道保险不能省。
    */
-  function navigateTabAndWait(tabId, url, timeoutMs = 20000) {
+  function navigateTabAndWait(tabId, url, timeoutMs = 60000) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let sawLoading = false;
+      const finish = (fn, arg) => {
+        clearTimeout(timer);
+        clearInterval(poll);
         chrome.tabs.onUpdated.removeListener(listener);
-        reject(new Error("页面刷新超时"));
+        fn(arg);
+      };
+      // 不只靠事件：每 500ms 也直接问一次标签页的状态，防止错过「加载完成」事件。
+      // 必须先看到过「加载中」才认「完成」，免得把刷新前那次旧的「完成」当成这次的。
+      const check = async () => {
+        try {
+          const t = await chrome.tabs.get(tabId);
+          if (t.status === "loading") sawLoading = true;
+          else if (t.status === "complete" && sawLoading && (t.url || "").startsWith(url)) finish(resolve);
+        } catch (e) {}
+      };
+      const poll = setInterval(check, 500);
+      const timer = setTimeout(async () => {
+        let where = "";
+        try {
+          const t = await chrome.tabs.get(tabId);
+          where = "（页面状态：" + t.status + "，地址：" + (t.url || "").slice(0, 80) + "）";
+        } catch (e) {}
+        finish(reject, new Error("页面刷新超时" + where + "。如果浏览器弹出了「离开此网站？」之类的提示，请点「离开」；也可能是 FMS 页面加载很慢，稍后再试一次。"));
       }, timeoutMs);
       function listener(updatedTabId, info) {
-        if (updatedTabId === tabId && info.status === "complete") {
-          clearTimeout(timer);
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve();
-        }
+        if (updatedTabId !== tabId) return;
+        if (info.status === "loading") sawLoading = true;
+        if (info.status === "complete" && sawLoading) check();
       }
       chrome.tabs.onUpdated.addListener(listener);
       chrome.tabs.update(tabId, { url });
