@@ -458,7 +458,12 @@
           const t = await chrome.tabs.get(tabId);
           if (t.status === "loading") sawLoading = true;
           else if (t.status === "complete" && sawLoading && (t.url || "").startsWith(url)) finish(resolve);
-        } catch (e) {}
+        } catch (e) {
+          // 标签页不存在了（被关掉）：不用傻等到超时，马上报出来让调用方重选
+          const gone = new Error("要刷新的 FMS 标签页被关掉了");
+          gone.tabGone = true;
+          finish(reject, gone);
+        }
       };
       const poll = setInterval(check, 500);
       const timer = setTimeout(async () => {
@@ -466,7 +471,12 @@
         try {
           const t = await chrome.tabs.get(tabId);
           where = "（页面状态：" + t.status + "，地址：" + (t.url || "").slice(0, 80) + "）";
-        } catch (e) {}
+        } catch (e) {
+          // 标签页已经不存在了：被关掉了，不是加载慢——交给调用方重新选一个标签页再试
+          const gone = new Error("要刷新的 FMS 标签页被关掉了");
+          gone.tabGone = true;
+          return finish(reject, gone);
+        }
         finish(reject, new Error("页面刷新超时" + where + "。如果浏览器弹出了「离开此网站？」之类的提示，请点「离开」；也可能是 FMS 页面加载很慢，稍后再试一次。"));
       }, timeoutMs);
       function listener(updatedTabId, info) {
@@ -504,11 +514,26 @@
    * 每次真正开始自动化操作前状态都是可靠的。
    */
   async function ensureFreshFmsTab(setStatus) {
+    // 选中的标签页如果在刷新途中消失了（被别的后台任务关掉），重新选一次再试，最多 2 次
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await pickAndRefreshFmsTab(setStatus);
+      } catch (e) {
+        if (attempt >= 2 || !e.tabGone) throw e;
+      }
+    }
+  }
+  async function pickAndRefreshFmsTab(setStatus) {
+    // 插件自己临时开的标签页（读账单列表等后台任务用的，马上会关）不能当成「用户的 FMS 页面」
+    let tempIds = [];
+    try {
+      tempIds = ((await chrome.runtime.sendMessage({ type: "tabs:temp" })) || {}).ids || [];
+    } catch (e) {}
     let tab = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
-    if (!FMSAutomation.isOnFmsBillPage(tab && tab.url)) {
+    if (!FMSAutomation.isOnFmsBillPage(tab && tab.url) || tempIds.includes(tab && tab.id)) {
       // 当前激活的标签页不是FMS账单页，尝试在所有已打开的标签页里找一个匹配的，自动切过去
       const allTabs = await chrome.tabs.query({});
-      const fmsTab = allTabs.find((t) => FMSAutomation.isOnFmsBillPage(t.url));
+      const fmsTab = allTabs.find((t) => FMSAutomation.isOnFmsBillPage(t.url) && !tempIds.includes(t.id));
       if (fmsTab) {
         tab = fmsTab;
         await chrome.tabs.update(tab.id, { active: true });

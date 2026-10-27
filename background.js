@@ -57,6 +57,7 @@ function waitTabComplete(tabId, timeoutMs = 30000) {
 // opts.foreground：写入类操作（生成账单、重新生成、导入）要在前台标签页里跑——
 // 后台标签页里浏览器会暂停动画帧和限制定时器，Element Plus 的下拉、日期面板、弹窗会卡在半开状态，
 // 自动选择就会时灵时不灵（有的品牌选得上、有的选不上）。跑完自动切回用户原来看的标签页。
+const TEMP_TABS = new Set();
 async function withBackgroundTab(url, name, fn, opts) {
   const foreground = !!(opts && opts.foreground);
   const target = new URL(url);
@@ -67,6 +68,7 @@ async function withBackgroundTab(url, name, fn, opts) {
     } catch (e) {}
   }
   const tab = await chrome.tabs.create({ url, active: foreground });
+  TEMP_TABS.add(tab.id); // 插件自己临时开的标签页：侧边栏找「FMS 页面」时要绕开它们（它们马上会被关掉）
   let keep = false;
   const onTarget = async () => {
     const u = new URL((await chrome.tabs.get(tab.id)).url);
@@ -87,7 +89,9 @@ async function withBackgroundTab(url, name, fn, opts) {
       throw e;
     }
   } finally {
-    if (!keep) chrome.tabs.remove(tab.id).catch(() => {});
+    // 等标签页真的关掉再返回：否则调用方紧接着查标签页，会把这个「正在关闭」的标签页当成 FMS 页面去刷新
+    if (!keep) await chrome.tabs.remove(tab.id).catch(() => {});
+    TEMP_TABS.delete(tab.id);
     if (foreground && !keep && prevTab && prevTab.id != null) chrome.tabs.update(prevTab.id, { active: true }).catch(() => {});
   }
 }
@@ -379,6 +383,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       runRegenJob(billNos);
     })();
     return true;
+  }
+  if (msg && msg.type === "tabs:temp") {
+    sendResponse({ ids: [...TEMP_TABS] });
+    return false;
   }
   if (msg && msg.type === "brands:refresh") {
     // 读 FMS「账单生成」弹窗里品牌下拉的全部选项（FMS 新增品牌后，这里能同步到），存起来给面板的品牌下拉用
