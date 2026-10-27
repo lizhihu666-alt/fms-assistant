@@ -212,18 +212,11 @@
                 <path d="M12 4v11m0-11 4 4m-4-4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
-              <p class="upload-text">点击或拖拽上传发票文件</p>
-              <input id="invoiceFileInput" type="file" accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.pdf,.zip,.rar,.ofd,.eml,.csv" hidden />
+              <p id="invoiceDropText" class="upload-text">点击或拖拽上传发票文件（可多选）</p>
+              <input id="invoiceFileInput" type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.pdf,.zip,.rar,.ofd,.eml,.csv" hidden />
             </div>
 
-            <div id="invoiceFileChip" class="file-chip" hidden>
-              <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.6"/>
-                <path d="M14 3v5h5" stroke="currentColor" stroke-width="1.6"/>
-              </svg>
-              <span id="invoiceFileName" class="file-chip-name"></span>
-              <button id="invoiceFileRemove" type="button" class="file-chip-remove" aria-label="移除发票文件">✕</button>
-            </div>
+            <div id="invoiceFileList" class="file-list"></div>
           </div>
 
           <button id="step2Btn" type="button" class="btn btn-outline btn-full" disabled>请款并上传发票</button>

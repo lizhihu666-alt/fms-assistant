@@ -118,3 +118,9 @@ body { background: var(--bg); }
 .brand-tags em { font-style: normal; padding: 1px 7px; border-radius: 99px; background: var(--surface-muted); color: var(--ink-500); }
 .brand-tags .t-overdue { background: #fbefed; color: #b3392e; }
 .brand-tags .t-warn { background: #fbf3e4; color: #8a5a12; }
+
+/* 发票文件：多个文件的列表；已有文件时上传区收窄 */
+.file-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.file-list:empty { display: none; margin: 0; }
+.upload-zone.compact { padding-top: 10px; padding-bottom: 10px; }
+.upload-zone.compact .upload-icon { display: none; }

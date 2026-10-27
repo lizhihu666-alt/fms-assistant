@@ -66,11 +66,9 @@
   const cleanDlEnText = document.getElementById("cleanDlEnText");
   const invoiceDropzone = document.getElementById("invoiceDropzone");
   const invoiceFileInput = document.getElementById("invoiceFileInput");
-  const invoiceFileChip = document.getElementById("invoiceFileChip");
-  const invoiceFileName = document.getElementById("invoiceFileName");
-  const invoiceFileRemove = document.getElementById("invoiceFileRemove");
+  const invoiceFileList = document.getElementById("invoiceFileList");
 
-  let invoiceFile = null;
+  let invoiceFiles = []; // 可以有多个发票/附件，请款时按顺序都传到报账明细里
   let checking = false;
 
   // 账单编号框里可以有一张或多张（同一个 vendor 下的多个品牌各有一张账单）：换行/空格/逗号分隔。
@@ -280,7 +278,7 @@
 
     // 按钮可用性：只有账单都确认过、且都不是「待确认」才能走 5、6 步
     const canStep1 = ready && has;
-    const canStep2 = ready && has && !!invoiceFile;
+    const canStep2 = ready && has && invoiceFiles.length > 0;
     step1Btn.disabled = !canStep1;
     step2Btn.disabled = !canStep2;
     step1Btn.classList.toggle("btn-primary", canStep1 && !canStep2);
@@ -328,12 +326,24 @@
   const setCleanStatus = makeStatusSetter(cleanStatusEl, "cleanStatus");
   const setRegenStatus = makeStatusSetter(regenStatusEl, "regenStatus");
 
-  function setInvoiceFile(file) {
-    invoiceFile = file;
-    invoiceDropzone.hidden = !!file;
-    invoiceFileChip.hidden = !file;
-    invoiceFileName.textContent = file ? file.name : "";
+  const FILE_ICON =
+    '<svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.6"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.6"/></svg>';
+  const sameFile = (x, y) => x.name === y.name && x.size === y.size && x.lastModified === y.lastModified;
+  function renderInvoiceFiles() {
+    invoiceFileList.innerHTML = invoiceFiles
+      .map(
+        (f, i) =>
+          '<div class="file-chip">' + FILE_ICON + '<span class="file-chip-name">' + escHtml(f.name) + '</span>' +
+          '<button type="button" class="file-chip-remove" data-i="' + i + '" aria-label="移除 ' + escHtml(f.name) + '">✕</button></div>'
+      )
+      .join("");
+    document.getElementById("invoiceDropText").textContent = invoiceFiles.length ? "继续添加文件" : "点击或拖拽上传发票文件（可多选）";
+    invoiceDropzone.classList.toggle("compact", invoiceFiles.length > 0);
     renderFlow();
+  }
+  function addInvoiceFiles(list) {
+    for (const f of list) if (!invoiceFiles.some((x) => sameFile(x, f))) invoiceFiles.push(f);
+    renderInvoiceFiles();
   }
 
   billNoInput.addEventListener("input", onBillChanged);
@@ -341,17 +351,15 @@
   resetBtn.addEventListener("click", () => {
     billNoInput.value = "";
     invoiceFileInput.value = "";
-    invoiceFile = null;
-    invoiceDropzone.hidden = false;
-    invoiceFileChip.hidden = true;
-    invoiceFileName.textContent = "";
+    invoiceFiles = [];
+    renderInvoiceFiles();
     onBillChanged();
   });
 
   invoiceDropzone.addEventListener("click", () => invoiceFileInput.click());
   invoiceFileInput.addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (file) setInvoiceFile(file);
+    addInvoiceFiles([...e.target.files]);
+    invoiceFileInput.value = ""; // 清空，下次再选同一个文件也会触发
   });
   ["dragenter", "dragover"].forEach((evt) => {
     invoiceDropzone.addEventListener(evt, (e) => {
@@ -366,13 +374,14 @@
     });
   });
   invoiceDropzone.addEventListener("drop", (e) => {
-    const file = e.dataTransfer.files[0];
-    if (file) setInvoiceFile(file);
+    addInvoiceFiles([...e.dataTransfer.files]);
   });
 
-  invoiceFileRemove.addEventListener("click", () => {
-    invoiceFileInput.value = "";
-    setInvoiceFile(null);
+  invoiceFileList.addEventListener("click", (e) => {
+    const btn = e.target.closest(".file-chip-remove");
+    if (!btn) return;
+    invoiceFiles.splice(Number(btn.dataset.i), 1);
+    renderInvoiceFiles();
   });
 
   // ---- 读取账单状态：后台打开 FMS 账单列表，一次读出这批账单各自处于什么状态，决定走哪个分支 ----
@@ -568,7 +577,7 @@
   // 多张账单（同一个 vendor）：一起勾选请款，合并成一张费控单，上传一份发票。
   step2Btn.addEventListener("click", async () => {
     const nos = currentBills();
-    if (!nos.length || !invoiceFile) return;
+    if (!nos.length || !invoiceFiles.length) return;
 
     step2Btn.disabled = true;
 
@@ -595,10 +604,11 @@
       const tab = await ensureFreshFmsTab(setInvoiceStatus);
 
       setInvoiceStatus(nos.length > 1 ? "一起勾选 " + nos.length + " 张账单请款 → 等待10秒 → 上传发票…" : "请款 → 等待10秒 → 上传发票…", "busy");
-      const invoiceBase64 = await fileToBase64(invoiceFile);
+      const files = [];
+      for (const f of invoiceFiles) files.push({ name: f.name, mime: f.type, b64: await fileToBase64(f) });
       // 报账明细里的「业务发生日期」要填所开月份的第一天；多张账单取最早的月份
       const months = (flow.bills || []).map((b) => b.month).filter((m) => /^\d{4}-\d{2}$/.test(m || "")).sort();
-      const args = [invoiceFile.name, invoiceFile.type, invoiceBase64, months[0] || ""];
+      const args = [files, months[0] || ""];
       const step2 =
         nos.length > 1
           ? await runStep(tab.id, FMSAutomation.submitInvoiceMulti, [nos, ...args], "请款并上传发票")
@@ -608,7 +618,7 @@
       if (step2.lineCount > 1) warn.push(`注意：这张请款单的报账明细有 ${step2.lineCount} 行，发票只附在了第一行，请核对其余行是否也需要附件。`);
       if (step2.dateNote) warn.push(step2.dateNote);
       setInvoiceStatus(
-        `请款完成：${nos.length > 1 ? nos.length + " 张账单合并成请款单 " : "请款单 "}${step2.ajfNo} 已附上发票，保存为草稿。请到 FMS 核对后，自己点「提交」。` +
+        `请款完成：${nos.length > 1 ? nos.length + " 张账单合并成请款单 " : "请款单 "}${step2.ajfNo} 已附上${files.length > 1 ? files.length + " 个文件" : "发票"}，保存为草稿。请到 FMS 核对后，自己点「提交」。` +
           (warn.length ? "\n" + warn.join("\n") : ""),
         warn.length ? "" : "ok"
       );

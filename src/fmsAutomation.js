@@ -222,7 +222,7 @@ const FMSAutomation = (() => {
    *
    * 已在真实账单（SET202609170002 / AJF2026091700012）上手动验证过整条链路可以跑通。
    */
-  async function submitInvoiceAndConfirm(billNo, invoiceFileName, invoiceMimeType, invoiceBase64, billMonth) {
+  async function submitInvoiceAndConfirm(billNo, invoiceFiles, billMonth) {
     const log = [];
     const step = (msg) => {
       log.push(msg);
@@ -397,7 +397,6 @@ const FMSAutomation = (() => {
         );
         return candidates.length ? candidates[candidates.length - 1] : null;
       }, "报账明细编辑弹窗");
-      const fileInput = await waitFor(() => dialog.querySelector('input[type="file"]'), "弹窗内的文件输入框");
 
       // 业务发生日期：FMS 默认填的是请款当天，这里改成所开月份的第一天（如 9 月账单 → 2026-09-01）。
       // 设置失败不中断（后面还要传发票、存草稿），把原因带回去提示用户人工改。
@@ -457,27 +456,12 @@ const FMSAutomation = (() => {
         }
       }
 
-      const byteChars = atob(invoiceBase64);
-      const byteNumbers = new Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: invoiceMimeType || "application/octet-stream" });
-      const file = new File([blob], invoiceFileName, { type: invoiceMimeType || "application/octet-stream" });
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      fileInput.files = dt.files;
-      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-      step("已上传发票文件: " + invoiceFileName);
+      // 支持多个附件：一个一个传——设置文件 → 等文件名出现在列表 → 等这个文件真的传到服务器 → 再传下一个
+      const files = Array.isArray(invoiceFiles) ? invoiceFiles : [];
+      if (!files.length) throw new Error("没有要上传的发票文件");
 
-      // 文件名出现在列表里 ≠ 文件真的传到服务器了——中间还有一段异步上传时间。
-      // 真实发生过：文件名已经显示，但服务器还没接收完，这时候点确认导致最终附件是空的。
-      // 所以要等到：文件名出现，而且列表项里再也没有"上传中/进度条/百分比"这类还在
-      // 处理的迹象，且这个"已完成"状态连续两次检查（间隔1秒）都保持住，才算真的传完。
-      await waitFor(() => dialog.textContent.includes(invoiceFileName), "附件出现在弹窗列表里", 15000);
-      step("附件已出现在列表里，等待上传到服务器完成…");
-
-      function attachmentStillUploading() {
-        if (!dialog.textContent.includes(invoiceFileName)) return true; // 文件名都不见了，肯定没好
+      function attachmentStillUploading(name) {
+        if (!dialog.textContent.includes(name)) return true; // 文件名都不见了，肯定没好
         if (dialog.textContent.includes("正在上传")) return true; // FMS明确提示："文件正在上传至服务器..."
         return [...dialog.querySelectorAll("*")].some((el) => {
           const cls = String(el.className || "");
@@ -487,18 +471,36 @@ const FMSAutomation = (() => {
         });
       }
 
-      let stableCount = 0;
-      const uploadStart = Date.now();
-      while (Date.now() - uploadStart < 60000 && stableCount < 2) {
-        if (attachmentStillUploading()) {
-          stableCount = 0;
-        } else {
-          stableCount++;
+      for (let fi = 0; fi < files.length; fi++) {
+        const f0 = files[fi];
+        const input = await waitFor(() => dialog.querySelector('input[type="file"]'), "弹窗内的文件输入框");
+        const byteChars = atob(f0.b64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([new Uint8Array(byteNumbers)], { type: f0.mime || "application/octet-stream" });
+        const file = new File([blob], f0.name, { type: f0.mime || "application/octet-stream" });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        step("已上传发票文件 (" + (fi + 1) + "/" + files.length + "): " + f0.name);
+
+        // 文件名出现在列表里 ≠ 文件真的传到服务器了——中间还有一段异步上传时间。
+        // 真实发生过：文件名已经显示，但服务器还没接收完，这时候点确认导致最终附件是空的。
+        // 所以要等到：文件名出现，而且再也没有"上传中/进度条/百分比"这类迹象，
+        // 且这个"已完成"状态连续两次检查（间隔1秒）都保持住，才算真的传完。
+        await waitFor(() => dialog.textContent.includes(f0.name), "附件出现在弹窗列表里: " + f0.name, 15000);
+        step("附件已出现在列表里，等待上传到服务器完成…");
+        let stableCount = 0;
+        const uploadStart = Date.now();
+        while (Date.now() - uploadStart < 60000 && stableCount < 2) {
+          if (attachmentStillUploading(f0.name)) stableCount = 0;
+          else stableCount++;
+          await sleep(1000);
         }
-        await sleep(1000);
-      }
-      if (attachmentStillUploading()) {
-        throw new Error("等待发票上传到服务器完成超时，已中止，未点击确认，请人工检查附件上传状态");
+        if (attachmentStillUploading(f0.name)) {
+          throw new Error("等待发票「" + f0.name + "」上传到服务器完成超时，已中止，未点击确认，请人工检查附件上传状态");
+        }
       }
       step("附件已上传完成且状态稳定，确认上传成功");
 
@@ -534,7 +536,7 @@ const FMSAutomation = (() => {
    *  - 请款后如果 FMS 没有把它们合并成同一张费控单，中止并说明，不替用户猜怎么处理；
    *  - 报账明细里如果有多行「第三方品牌结算」，发票只附在第一行，并把行数返回，让界面提醒人工核对。
    */
-  async function submitInvoiceMulti(billNos, invoiceFileName, invoiceMimeType, invoiceBase64, billMonth) {
+  async function submitInvoiceMulti(billNos, invoiceFiles, billMonth) {
     const log = [];
     const step = (msg) => {
       log.push(msg);
@@ -697,7 +699,6 @@ const FMSAutomation = (() => {
         const c = [...document.querySelectorAll(".el-dialog")].filter((d) => d.offsetParent !== null && d.textContent.includes("报账明细"));
         return c.length ? c[c.length - 1] : null;
       }, "报账明细编辑弹窗");
-      const fileInput = await waitFor(() => dialog.querySelector('input[type="file"]'), "弹窗内的文件输入框");
 
       // 业务发生日期：FMS 默认填的是请款当天，这里改成所开月份的第一天（如 9 月账单 → 2026-09-01）。
       // 设置失败不中断（后面还要传发票、存草稿），把原因带回去提示用户人工改。
@@ -757,33 +758,52 @@ const FMSAutomation = (() => {
         }
       }
 
-      const byteChars = atob(invoiceBase64);
-      const byteNumbers = new Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-      const blob = new Blob([new Uint8Array(byteNumbers)], { type: invoiceMimeType || "application/octet-stream" });
-      const file = new File([blob], invoiceFileName, { type: invoiceMimeType || "application/octet-stream" });
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      fileInput.files = dt.files;
-      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-      step("已上传发票文件: " + invoiceFileName);
+      // 支持多个附件：一个一个传——设置文件 → 等文件名出现在列表 → 等这个文件真的传到服务器 → 再传下一个
+      const files = Array.isArray(invoiceFiles) ? invoiceFiles : [];
+      if (!files.length) throw new Error("没有要上传的发票文件");
 
-      await waitFor(() => dialog.textContent.includes(invoiceFileName), "附件出现在弹窗列表里", 15000);
-      function attachmentStillUploading() {
-        if (!dialog.textContent.includes(invoiceFileName)) return true;
-        if (dialog.textContent.includes("正在上传")) return true;
+      function attachmentStillUploading(name) {
+        if (!dialog.textContent.includes(name)) return true; // 文件名都不见了，肯定没好
+        if (dialog.textContent.includes("正在上传")) return true; // FMS明确提示："文件正在上传至服务器..."
         return [...dialog.querySelectorAll("*")].some((el) => {
-          if (/uploading|progress|loading/i.test(String(el.className || ""))) return true;
-          return el.children.length === 0 && /^\d{1,3}\s*%$/.test(el.textContent.trim());
+          const cls = String(el.className || "");
+          if (/uploading|progress|loading/i.test(cls)) return true;
+          if (el.children.length === 0 && /^\d{1,3}\s*%$/.test(el.textContent.trim())) return true;
+          return false;
         });
       }
-      let stable = 0;
-      const t0 = Date.now();
-      while (Date.now() - t0 < 60000 && stable < 2) {
-        stable = attachmentStillUploading() ? 0 : stable + 1;
-        await sleep(1000);
+
+      for (let fi = 0; fi < files.length; fi++) {
+        const f0 = files[fi];
+        const input = await waitFor(() => dialog.querySelector('input[type="file"]'), "弹窗内的文件输入框");
+        const byteChars = atob(f0.b64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([new Uint8Array(byteNumbers)], { type: f0.mime || "application/octet-stream" });
+        const file = new File([blob], f0.name, { type: f0.mime || "application/octet-stream" });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        step("已上传发票文件 (" + (fi + 1) + "/" + files.length + "): " + f0.name);
+
+        // 文件名出现在列表里 ≠ 文件真的传到服务器了——中间还有一段异步上传时间。
+        // 真实发生过：文件名已经显示，但服务器还没接收完，这时候点确认导致最终附件是空的。
+        // 所以要等到：文件名出现，而且再也没有"上传中/进度条/百分比"这类迹象，
+        // 且这个"已完成"状态连续两次检查（间隔1秒）都保持住，才算真的传完。
+        await waitFor(() => dialog.textContent.includes(f0.name), "附件出现在弹窗列表里: " + f0.name, 15000);
+        step("附件已出现在列表里，等待上传到服务器完成…");
+        let stableCount = 0;
+        const uploadStart = Date.now();
+        while (Date.now() - uploadStart < 60000 && stableCount < 2) {
+          if (attachmentStillUploading(f0.name)) stableCount = 0;
+          else stableCount++;
+          await sleep(1000);
+        }
+        if (attachmentStillUploading(f0.name)) {
+          throw new Error("等待发票「" + f0.name + "」上传到服务器完成超时，已中止，未点击确认，请人工检查附件上传状态");
+        }
       }
-      if (attachmentStillUploading()) throw new Error("等待发票上传到服务器完成超时，已中止，未点击确认，请人工检查附件上传状态");
       step("附件已上传完成且状态稳定");
 
       // 5. 点「确认」——仅保存草稿，绝不点「提交」。
