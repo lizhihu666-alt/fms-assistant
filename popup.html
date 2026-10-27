@@ -76,7 +76,10 @@
               <select id="genShop" class="text-input"></select>
             </div>
             <div class="field-block">
-              <label for="genMonth" class="field-label">结算月份（可多选）</label>
+              <div class="field-label-row">
+                <label for="genMonth" class="field-label">结算月份（可多选）</label>
+                <button id="genMonthsClear" type="button" class="ghost-link" hidden>清空</button>
+              </div>
               <input id="genMonth" type="month" class="text-input" />
             </div>
           </div>
@@ -206,7 +209,10 @@
         </div>
         <div class="step-card-body">
           <div class="field-block">
-            <label class="field-label">发票文件</label>
+            <div class="field-label-row">
+              <label class="field-label">发票文件</label>
+              <button id="invoiceClear" type="button" class="ghost-link" hidden>清空全部</button>
+            </div>
 
             <div id="invoiceDropzone" class="upload-zone">
               <svg class="upload-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

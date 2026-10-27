@@ -339,8 +339,14 @@
       .join("");
     document.getElementById("invoiceDropText").textContent = invoiceFiles.length ? "继续添加文件" : "点击或拖拽上传发票文件（可多选）";
     invoiceDropzone.classList.toggle("compact", invoiceFiles.length > 0);
+    document.getElementById("invoiceClear").hidden = invoiceFiles.length < 2;
     renderFlow();
   }
+  document.getElementById("invoiceClear").addEventListener("click", () => {
+    invoiceFiles = [];
+    invoiceFileInput.value = "";
+    renderInvoiceFiles();
+  });
   function addInvoiceFiles(list) {
     for (const f of list) if (!invoiceFiles.some((x) => sameFile(x, f))) invoiceFiles.push(f);
     renderInvoiceFiles();
@@ -900,10 +906,18 @@
   function renderGenMonths() {
     genMonths = [...new Set(genMonths)].filter((m) => /^\d{4}-\d{2}$/.test(m)).sort();
     genMonthsEl.innerHTML = genMonths
-      .map((m) => '<span class="month-chip">' + m.replace("-", "年") + '月' + (genMonths.length > 1 ? '<button type="button" data-m="' + m + '" aria-label="移除 ' + m + '">✕</button>' : "") + "</span>")
+      .map((m) => '<span class="month-chip">' + m.replace("-", "年") + '月' + '<button type="button" data-m="' + m + '" aria-label="移除 ' + m + '">✕</button>' + "</span>")
       .join("");
+    genMonthsClear.hidden = genMonths.length < 2;
     updateGenBtn();
   }
+  const genMonthsClear = document.getElementById("genMonthsClear");
+  genMonthsClear.addEventListener("click", () => {
+    genMonths = [];
+    genMonth.value = "";
+    renderGenMonths();
+    saveGenForm();
+  });
   genMonth.addEventListener("change", () => {
     if (genMonth.value) genMonths.push(genMonth.value);
     renderGenMonths();
