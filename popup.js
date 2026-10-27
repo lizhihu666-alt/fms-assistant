@@ -607,8 +607,37 @@
   // 只要账单在FMS里处于正确的结算状态即可，所以可以跟第 5 步间隔任意长时间执行。
   // 多张账单（同一个 vendor）：一起勾选请款，合并成一张费控单，上传一份发票。
   step2Btn.addEventListener("click", async () => {
-    const nos = currentBills();
-    if (!nos.length || !invoiceFiles.length) return;
+    const allNos = currentBills();
+    if (!allNos.length || !invoiceFiles.length) return;
+
+    // 一个 vendor 下的账单状态常常不一样：「无需结算」的不用请款；已经「待请款」的已有自己的费控单，
+    // 不能再并进新的请款单。所以只对「待生成请款单」的那批一起请款，其余的先告诉用户、让用户确认。
+    const statusOf = Object.fromEntries((flow.bills || []).map((b) => [b.billNo, b.status]));
+    const skipNos = allNos.filter((no) => statusOf[no] === "NO_SETTLEMENT_REQUIRED");
+    const doneNos = allNos.filter((no) => statusOf[no] === "PENDING_REQUEST");
+    const todoNos = allNos.filter((no) => statusOf[no] === "PENDING_GENERATE_REQUEST");
+    let nos = allNos;
+    if (skipNos.length || (doneNos.length && todoNos.length)) {
+      const keep = todoNos.length ? todoNos : doneNos; // 有待请款的就请这批；全是「待请款」就是补传发票
+      nos = allNos.filter((no) => keep.includes(no) || !skipNos.includes(no) && !doneNos.includes(no) && !todoNos.includes(no));
+      const lines = [];
+      if (skipNos.length) lines.push("无需结算，已跳过（" + skipNos.length + " 张）：" + skipNos.join("、"));
+      if (doneNos.length && todoNos.length) lines.push("已经请过款，有自己的费控单，不会并入（" + doneNos.length + " 张）：" + doneNos.join("、"));
+      const ok = window.confirm(
+        "这批账单的状态不完全一样：\n" + lines.join("\n") +
+          "\n\n本次将处理 " + nos.length + " 张：" + nos.join("、") +
+          (todoNos.length ? "\n（一起请款，合并成一张请款单，上传发票）" : "\n（已请过款，直接在现有费控单上传发票）") +
+          "\n\n确定：继续\n取消：先不处理"
+      );
+      if (!ok) {
+        setInvoiceStatus("已取消请款，没有对 FMS 做任何改动。", "");
+        return;
+      }
+    }
+    if (!nos.length) {
+      setInvoiceStatus("这些账单都不需要请款（状态是「无需结算」）。", "error");
+      return;
+    }
 
     step2Btn.disabled = true;
 
