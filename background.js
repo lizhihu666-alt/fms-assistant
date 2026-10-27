@@ -187,10 +187,15 @@ async function setGen(patch) {
 // brands：要生成账单的品牌列表（单个品牌时就是 1 个；按 Vendor 生成时是该 vendor 下的所有品牌）。
 // 每个品牌依次：已经有账单就不重复生成，没有就在 FMS「账单生成」里生成；最后统一等它们出现在账单列表里。
 // 某个品牌失败（比如品牌下拉里没有这个品牌）不影响其他品牌，最后一起汇报。
-async function runGenerateJob(brands, shop, month) {
+async function runGenerateJob(brands, shop, monthsIn) {
   const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
-  const multi = brands.length > 1;
-  const label = (multi ? brands.join(" + ") : brands[0]) + " / " + shop + " / " + month;
+  const months = [...new Set(monthsIn)].sort();
+  // 每个「品牌 × 月份」是一张账单；pairs 的 key 用来在结果里区分
+  const pairs = months.flatMap((month) => brands.map((brand) => ({ brand, month, key: brand + "|" + month })));
+  const multi = pairs.length > 1;
+  const monthLabel = months.length > 1 ? months[0] + " ~ " + months[months.length - 1] + "（" + months.length + " 个月）" : months[0];
+  const label = (brands.length > 1 ? brands.join(" + ") : brands[0]) + " / " + shop + " / " + monthLabel;
+  const nameOf = (p) => p.brand + (months.length > 1 ? " " + p.month : "");
   try {
     await setGen({ text: "正在检查 " + label + " 的账单是否已经存在…", kind: "busy", bills: [] });
     const out = await withBackgroundTab(
@@ -198,29 +203,29 @@ async function runGenerateJob(brands, shop, month) {
       "FMS",
       async (tabId) => {
         const read = async () => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records;
-        const foundOf = (records) => Object.fromEntries(brands.map((b) => [b, BillGen.findBills(records, b, shop, month)]));
+        const foundOf = (records) => Object.fromEntries(pairs.map((p) => [p.key, BillGen.findBills(records, p.brand, shop, p.month)]));
         let found = foundOf(await read());
-        const existed = brands.filter((b) => found[b].length);
+        const existed = pairs.filter((p) => found[p.key].length).map((p) => p.key);
         const failures = {};
         const submitted = [];
         const messages = [];
 
         let idx = 0;
-        for (const brand of brands) {
+        for (const p of pairs) {
           idx++;
-          if (found[brand].length) continue;
-          await setGen({ text: "正在 FMS 生成 " + (multi ? brand + "（" + idx + "/" + brands.length + "）" : label) + " 的账单…", kind: "busy" });
+          if (found[p.key].length) continue;
+          await setGen({ text: "正在 FMS 生成 " + (multi ? nameOf(p) + "（" + idx + "/" + pairs.length + "）" : label) + " 的账单…", kind: "busy" });
           try {
-            const g = await runStep(tabId, BillGen.generateBill, [brand, shop, month], "生成账单");
-            submitted.push(brand);
+            const g = await runStep(tabId, BillGen.generateBill, [p.brand, shop, p.month], "生成账单");
+            submitted.push(p.key);
             (g.messages || []).forEach((m) => messages.push(m));
           } catch (e) {
             if (!multi) throw e;
-            failures[brand] = e.message.split("\n")[0];
+            failures[p.key] = e.message.split("\n")[0];
           }
         }
 
-        for (let i = 0; i < 8 && submitted.some((b) => !found[b].length); i++) {
+        for (let i = 0; i < 8 && submitted.some((k) => !found[k].length); i++) {
           await new Promise((r) => setTimeout(r, 6000));
           await setGen({ text: "已提交生成，等 FMS 出账单（" + (i + 1) + "/8）…", kind: "busy" });
           try {
@@ -235,20 +240,21 @@ async function runGenerateJob(brands, shop, month) {
       { foreground: true }
     );
 
+    const nameByKey = Object.fromEntries(pairs.map((p) => [p.key, nameOf(p)]));
     const bills = [];
-    for (const brand of brands) {
-      for (const r of out.found[brand] || []) bills.push({ billNo: r.settlementNo, status: r.settlementStatus, site: r.siteCode, brand });
+    for (const p of pairs) {
+      for (const r of out.found[p.key] || []) bills.push({ billNo: r.settlementNo, status: r.settlementStatus, site: r.siteCode, brand: p.brand, month: p.month });
     }
-    const missing = out.submitted.filter((b) => !out.found[b].length);
-    const failedBrands = Object.keys(out.failures);
+    const missing = out.submitted.filter((k) => !out.found[k].length);
+    const failedKeys = Object.keys(out.failures);
 
     if (!bills.length) {
       await setGen({
         running: false,
-        kind: failedBrands.length ? "error" : "",
+        kind: failedKeys.length ? "error" : "",
         bills: [],
-        text: failedBrands.length
-          ? "生成失败：" + failedBrands.map((b) => b + "（" + out.failures[b] + "）").join("；")
+        text: failedKeys.length
+          ? "生成失败：" + failedKeys.map((k) => nameByKey[k] + "（" + out.failures[k] + "）").join("；")
           : "已提交生成" + (out.messages.length ? "（FMS 提示：" + out.messages.join("；") + "）" : "") +
             "，但暂时没在账单列表里看到 " + label + " 的账单。可能还在处理，请稍后到 FMS 的账单列表或「任务日志」确认。",
       });
@@ -262,13 +268,12 @@ async function runGenerateJob(brands, shop, month) {
         bills.map((x) => x.billNo + (x.site ? "（" + x.site + "）" : "")).join("、") +
         (bills.length > 1 ? "。同一组合有多张账单，已全部填入。" : "。已填入下方账单编号。");
     } else {
-      const okBrands = [...new Set(bills.map((b) => b.brand))];
-      text = "共 " + bills.length + " 张账单（" + okBrands.join("、") + "）" +
-        (out.existed.length ? "，其中已存在的：" + out.existed.join("、") : "") + "，已全部填入账单编号。";
-      if (missing.length) text += "\n已提交但暂时没在列表里看到：" + missing.join("、") + "，请稍后到 FMS 确认。";
-      if (failedBrands.length) text += "\n生成失败：" + failedBrands.map((b) => b + "（" + out.failures[b] + "）").join("；");
+      text = "共 " + bills.length + " 张账单" +
+        (out.existed.length ? "，其中已存在的：" + out.existed.map((k) => nameByKey[k]).join("、") : "") + "，已全部填入账单编号。";
+      if (missing.length) text += "\n已提交但暂时没在列表里看到：" + missing.map((k) => nameByKey[k]).join("、") + "，请稍后到 FMS 确认。";
+      if (failedKeys.length) text += "\n生成失败：" + failedKeys.map((k) => nameByKey[k] + "（" + out.failures[k] + "）").join("；");
     }
-    await setGen({ running: false, kind: failedBrands.length || missing.length ? "" : "ok", bills, text });
+    await setGen({ running: false, kind: failedKeys.length || missing.length ? "" : "ok", bills, text });
   } catch (err) {
     console.error(err);
     await setGen({ running: false, kind: "error", bills: [], text: "生成账单失败：" + err.message });
@@ -482,9 +487,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       const brands = Array.isArray(msg.brands) && msg.brands.length ? msg.brands : [msg.brand];
-      await setGen({ running: true, startedAt: Date.now(), brands, shop: msg.shop, month: msg.month, text: "任务已开始…", kind: "busy", bills: [] });
+      const months = Array.isArray(msg.months) && msg.months.length ? msg.months : [msg.month];
+      await setGen({ running: true, startedAt: Date.now(), brands, shop: msg.shop, months, text: "任务已开始…", kind: "busy", bills: [] });
       sendResponse({ started: true });
-      runGenerateJob(brands, msg.shop, msg.month);
+      runGenerateJob(brands, msg.shop, months);
     })();
     return true;
   }

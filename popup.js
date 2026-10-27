@@ -636,6 +636,8 @@
   const genBrand = document.getElementById("genBrand");
   const genShop = document.getElementById("genShop");
   const genMonth = document.getElementById("genMonth");
+  const genMonthsEl = document.getElementById("genMonths");
+  let genMonths = []; // 已选的结算月份（升序），生成时每个月份 × 每个品牌各生成一张
   const genBtn = document.getElementById("genBtn");
   const genStatus = document.getElementById("genStatus");
   const genMode = document.getElementById("genMode");
@@ -691,6 +693,7 @@
     const d = new Date();
     d.setMonth(d.getMonth() - 1);
     genMonth.value = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    genMonths = [genMonth.value];
   }
 
   // Vendor 清单：手动指定的分组（见 progress.js 的 vendorGroups）+ FMS 账单里「品牌商公司」下有 2 个以上品牌的。
@@ -850,21 +853,45 @@
   }
 
   function saveGenForm() {
-    chrome.storage.local.set({ genForm: { mode: genModeValue, brand: genBrand.value, vendor: genVendor.value, shop: genShop.value, month: genMonth.value } });
+    chrome.storage.local.set({ genForm: { mode: genModeValue, brand: genBrand.value, vendor: genVendor.value, shop: genShop.value, month: genMonth.value, months: genMonths } });
     updateGenBtn();
   }
   let genRunning = false;
   function updateGenBtn() {
     const brands = selectedBrands();
-    genBtn.disabled = genRunning || !brands.length || !genShop.value || !genMonth.value;
+    genBtn.disabled = genRunning || !brands.length || !genShop.value || !genMonths.length;
     genBtn.textContent = genRunning
       ? "后台生成中…（可以去看别的标签页）"
       : genModeValue === "vendor"
       ? brands.length
-        ? `生成 ${brands.length} 个品牌的账单`
+        ? `生成 ${brands.length} 个品牌${genMonths.length > 1 ? " × " + genMonths.length + " 个月份" : ""}的账单`
         : "请至少勾选一个品牌"
+      : genMonths.length > 1
+      ? `生成 ${genMonths.length} 个月份的账单`
       : "生成账单";
   }
+
+  // 已选月份的标签：月份输入框每选一个就加进来，点 ✕ 去掉；至少保留一个
+  function renderGenMonths() {
+    genMonths = [...new Set(genMonths)].filter((m) => /^\d{4}-\d{2}$/.test(m)).sort();
+    genMonthsEl.innerHTML = genMonths
+      .map((m) => '<span class="month-chip">' + m.replace("-", "年") + '月' + (genMonths.length > 1 ? '<button type="button" data-m="' + m + '" aria-label="移除 ' + m + '">✕</button>' : "") + "</span>")
+      .join("");
+    updateGenBtn();
+  }
+  genMonth.addEventListener("change", () => {
+    if (genMonth.value) genMonths.push(genMonth.value);
+    renderGenMonths();
+    saveGenForm();
+  });
+  genMonthsEl.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-m]");
+    if (!b) return;
+    genMonths = genMonths.filter((m) => m !== b.dataset.m);
+    renderGenMonths();
+    saveGenForm();
+  });
+  renderGenMonths();
   [genBrand, genShop, genMonth, genVendor].forEach((el) => el.addEventListener("change", () => (el === genVendor ? (renderVendorBrands(), saveGenForm()) : saveGenForm())));
   genVendorBrands.addEventListener("change", updateGenBtn);
   genMode.querySelectorAll(".seg-btn").forEach((b) => b.addEventListener("click", () => setGenMode(b.dataset.mode, true)));
@@ -882,7 +909,7 @@
       genAppliedKey = key;
       const nos = job.bills.map((x) => x.billNo);
       billNoInput.value = nos.join("\n");
-      flow = freshFlow(flowKeyOf(nos), job.bills.map((x) => ({ billNo: x.billNo, brand: x.brand || "", status: x.status || "" })));
+      flow = freshFlow(flowKeyOf(nos), job.bills.map((x) => ({ billNo: x.billNo, brand: x.brand || "", status: x.status || "", month: x.month || "" })));
       saveFlow();
       setCleanStatus("");
       setInvoiceStatus("");
@@ -896,17 +923,18 @@
 
   genBtn.addEventListener("click", async () => {
     const brands = selectedBrands();
-    if (!brands.length || !genShop.value || !genMonth.value) return;
+    if (!brands.length || !genShop.value || !genMonths.length) return;
     const msg =
       "确认在 FMS 生成账单？\n" +
       (brands.length > 1 ? "品牌（" + brands.length + " 个）：" + brands.join("、") : "品牌：" + brands[0]) +
-      "\n店铺：" + genShop.value + "\n结算月份：" + genMonth.value;
+      "\n店铺：" + genShop.value + "\n结算月份：" + genMonths.join("、") +
+      (genMonths.length * brands.length > 1 ? "\n共 " + genMonths.length * brands.length + " 张账单（已存在的不会重复生成）" : "");
     if (genRunning || !confirm(msg)) return;
     genRunning = true; // 先本地上锁，等后台写入进度前再点也不会重复生成
     updateGenBtn();
     let res;
     try {
-      res = await chrome.runtime.sendMessage({ type: "bill:generate", brands, shop: genShop.value, month: genMonth.value });
+      res = await chrome.runtime.sendMessage({ type: "bill:generate", brands, shop: genShop.value, months: genMonths, month: genMonths[0] });
     } catch (e) {
       res = null;
     }
@@ -1242,6 +1270,8 @@
       if (r.genForm.brand) genBrand.value = r.genForm.brand;
       if (r.genForm.shop) genShop.value = r.genForm.shop;
       if (r.genForm.month) genMonth.value = r.genForm.month;
+      genMonths = Array.isArray(r.genForm.months) && r.genForm.months.length ? r.genForm.months.slice() : r.genForm.month ? [r.genForm.month] : genMonths;
+      renderGenMonths();
       savedVendorId = r.genForm.vendor || "";
     }
     snapshotBillsCache = (r.fmsSnapshot && r.fmsSnapshot.bills) || [];

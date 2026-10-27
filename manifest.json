@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FMS付款助手",
-  "version": "0.9.21",
+  "version": "0.9.22",
   "description": "自动清洗FMS品牌商账单、下载对账文件、请款并上传发票，最后留待人工核查提交",
   "author": "Leo Hu",
   "action": {

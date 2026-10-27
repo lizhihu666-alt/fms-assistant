@@ -317,10 +317,34 @@ const FMSCleaner = (() => {
    * G3：=D3-F3（浅绿底）
    * F5/G5："结算总额" / =G3（金色底、加粗大字，全表的视觉焦点）
    */
-  function buildOverviewSheet(workbook, monthStr, forwardTotals, reverseTotals, currencyCode, brandTotals, euTotals) {
+  /** ["2026-08","2026-09"] → "2026年8月 ~ 9月"；只有一个月（或没有）返回 null。 */
+  function monthRangeText(months) {
+    const ym = (months || [])
+      .map((m) => String(m).split("-").map(Number))
+      .filter(([y, m]) => y && m)
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (ym.length < 2) return null;
+    const [y1, m1] = ym[0];
+    const [y2, m2] = ym[ym.length - 1];
+    return y1 === y2 ? `${y1}年${m1}月 ~ ${m2}月` : `${y1}年${m1}月 ~ ${y2}年${m2}月`;
+  }
+
+  function buildOverviewSheet(workbook, monthStr, forwardTotals, reverseTotals, currencyCode, brandTotals, euTotals, months) {
     const ws = workbook.addWorksheet("数据概览");
     const numFmt = currencyNumFmt(currencyCode);
     const monthSerial = monthStr ? excelSerialFromYearMonth(monthStr) : null;
+    // 明细里有多个结算月份时，「结算月份」这一格写成范围文字，如「2026年8月 ~ 9月」（跨年「2025年12月 ~ 2026年1月」），
+    // 单个月份还是原来的日期格式。
+    const monthText = monthRangeText(months);
+    const fillMonth = (cell, colNo) => {
+      if (monthText) {
+        cell.value = monthText;
+        ws.getColumn(colNo).width = Math.max(ws.getColumn(colNo).width || 0, displayWidth(monthText) + 2);
+      } else {
+        cell.value = monthSerial;
+        if (monthSerial !== null) cell.numFmt = 'yyyy"年"m"月"';
+      }
+    };
 
     // Justfab EU：按 结算主体 → 站点 → 品牌 展开，每个主体后面一行小计，最后按币种合计。
     // （EU 的几个主体币种不同，比如英国是 GBP，不能把所有行直接加在一起。）
@@ -380,8 +404,7 @@ const FMSCleaner = (() => {
           row.getCell(1).value = x.entity;
           row.getCell(2).value = x.site;
           row.getCell(3).value = x.brand;
-          row.getCell(4).value = monthSerial;
-          if (monthSerial !== null) row.getCell(4).numFmt = 'yyyy"年"m"月"';
+          fillMonth(row.getCell(4), 4);
           row.getCell(5).value = x.fQty;
           row.getCell(6).value = x.fPrice;
           row.getCell(6).numFmt = fmt;
@@ -470,8 +493,7 @@ const FMSCleaner = (() => {
         const rowNo = 3 + i;
         const row = ws.getRow(rowNo);
         row.getCell(1).value = x.brand;
-        row.getCell(2).value = monthSerial;
-        if (monthSerial !== null) row.getCell(2).numFmt = 'yyyy"年"m"月"';
+        fillMonth(row.getCell(2), 2);
         row.getCell(3).value = x.fQty;
         row.getCell(4).value = x.fPrice;
         row.getCell(4).numFmt = numFmt;
@@ -548,8 +570,7 @@ const FMSCleaner = (() => {
 
     // 数据行
     const dataRow = ws.getRow(3);
-    dataRow.getCell(2).value = monthSerial;
-    if (monthSerial !== null) dataRow.getCell(2).numFmt = 'yyyy"年"m"月"';
+    fillMonth(dataRow.getCell(2), 2);
     dataRow.getCell(3).value = forwardTotals.totalQty;
     dataRow.getCell(4).value = forwardTotals.totalPrice;
     dataRow.getCell(4).numFmt = numFmt;
@@ -630,7 +651,8 @@ const FMSCleaner = (() => {
       reverseTotals: reverse,
       currencyCode,
       brand,
-      monthStr, // "YYYY-MM"
+      monthStr, // "YYYY-MM"（第一行的月份）
+      months: [...new Set(rows.map((r) => String(r[monthColIdx] || "")).filter((m) => /^\d{4}-\d{1,2}$/.test(m)))].sort(), // 明细里出现的所有结算月份，文件名用
       euTotals: totalsByEntitySite(headers, rows), // Justfab EU 才有：按 结算主体/站点/品牌/币种 汇总，数据概览用
       brandTotals: totalsByBrand(headers, rows), // 按品牌的合计，多个品牌时展示在数据概览里
     };
@@ -712,14 +734,19 @@ const FMSCleaner = (() => {
    * 例："Pretty Garden 8.01-8.31结算明细20260916.xlsx"
    */
   function buildOutputFileName(result, generatedDate = new Date(), lang = "zh") {
-    const [y, m] = String(result.monthStr).split("-").map(Number);
-    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    const dateRange = `${m}.01-${m}.${String(lastDay).padStart(2, "0")}`;
+    // 日期范围：单个月份是「9.01-9.30」；多个月份取最早月份第一天到最晚月份最后一天，如「8.01-9.30」；
+    // 跨年时带上年份，如「2025.12.01-2026.01.31」
+    const ym = (result.months && result.months.length ? result.months : [result.monthStr]).map((s) => String(s).split("-").map(Number)).sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    const [y1, m1] = ym[0];
+    const [y2, m2] = ym[ym.length - 1];
+    const lastDay = new Date(Date.UTC(y2, m2, 0)).getUTCDate();
+    const dd = String(lastDay).padStart(2, "0");
+    const dateRange = y1 === y2 ? `${m1}.01-${m2}.${dd}` : `${y1}.${String(m1).padStart(2, "0")}.01-${y2}.${String(m2).padStart(2, "0")}.${dd}`;
 
     const yyyy = generatedDate.getFullYear();
     const mm = String(generatedDate.getMonth() + 1).padStart(2, "0");
-    const dd = String(generatedDate.getDate()).padStart(2, "0");
-    const generatedStr = `${yyyy}${mm}${dd}`;
+    const gd = String(generatedDate.getDate()).padStart(2, "0");
+    const generatedStr = `${yyyy}${mm}${gd}`;
 
     if (lang === "en") return `${result.brand} ${dateRange} Settlement Details ${generatedStr}.xlsx`;
     return `${result.brand} ${dateRange}结算明细${generatedStr}.xlsx`;
@@ -746,6 +773,10 @@ const FMSCleaner = (() => {
     if (typeof v !== "string") return v;
     if (EN[v] !== undefined) return EN[v];
     let m;
+    if ((m = v.match(/^(\d{4})年(\d{1,2})月 ~ (?:(\d{4})年)?(\d{1,2})月$/))) {
+      const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      return m[3] ? MON[m[2] - 1] + " " + m[1] + " ~ " + MON[m[4] - 1] + " " + m[3] : MON[m[2] - 1] + " ~ " + MON[m[4] - 1] + " " + m[1];
+    }
     if ((m = v.match(/^单位：(.*)$/))) return "Currency: " + m[1];
     if ((m = v.match(/^(.*) 小计$/))) return m[1] + " Subtotal";
     if ((m = v.match(/^合计（(.*)）$/))) return "Total (" + m[1] + ")";
@@ -776,7 +807,7 @@ const FMSCleaner = (() => {
     const wb = new ExcelJS.Workbook();
     const numFmt = currencyNumFmt(result.currencyCode);
 
-    buildOverviewSheet(wb, result.monthStr, result.forwardTotals, result.reverseTotals, result.currencyCode, result.brandTotals, result.euTotals);
+    buildOverviewSheet(wb, result.monthStr, result.forwardTotals, result.reverseTotals, result.currencyCode, result.brandTotals, result.euTotals, result.months);
     buildExportSheet(wb, result.fmsExport, numFmt);
     buildSummarySheet(wb, "正向数据", result.forwardAoa, numFmt);
     buildSummarySheet(wb, "逆向数据", result.reverseAoa, numFmt);
