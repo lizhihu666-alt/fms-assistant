@@ -46,4 +46,16 @@
     await chrome.storage.local.set({ loop });
     showStatus({ state: "", text: loop.enabled ? "已保存，正在连接…" : "已保存（未启用）" });
   });
+
+  // 保存对账表需要「下载」权限：做成可选权限，由本人在这里点一下授权，同事装插件时不会多出提示
+  const dlStatus = $("dlStatus");
+  const showDl = (granted) => {
+    dlStatus.textContent = granted ? "已授权：可以保存对账表" : "还没授权";
+    $("allowDl").hidden = granted;
+  };
+  chrome.permissions.contains({ permissions: ["downloads"] }, (g) => showDl(!!g));
+  $("allowDl").addEventListener("click", async () => {
+    const g = await chrome.permissions.request({ permissions: ["downloads"] }).catch(() => false);
+    showDl(!!g);
+  });
 })();

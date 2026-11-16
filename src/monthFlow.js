@@ -26,8 +26,8 @@ const MonthFlow = (() => {
     NO_SETTLEMENT_REQUIRED: "无需结算：不用做什么",
   };
 
-  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存任何文件
-  const MODES = ["dryrun", "cleandry"];
+  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存；clean：清洗后保存到下载文件夹（唯一会写本机文件的模式）
+  const MODES = ["dryrun", "cleandry", "clean"];
 
   const norm = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, "");
 
