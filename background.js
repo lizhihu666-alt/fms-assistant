@@ -5,6 +5,14 @@
 // 里面正在跑的任务也跟着停了。耗时的任务（补基础数据要后台开 FMS 和 EH 两个标签页）改在这里跑，
 // 弹窗关了也不受影响；进度写进 chrome.storage.local，弹窗重新打开（或一直开着）都能看到最新状态。
 
+// 清洗对账表要用到的库；万一加载失败，只让清洗不能用，不影响别的功能
+let CLEAN_READY = true;
+try {
+  importScripts("libs/xlsx.full.min.js", "libs/exceljs.min.js", "src/cleaner.js", "src/fmsAutomation.js");
+} catch (e) {
+  CLEAN_READY = false;
+  console.error("清洗模块加载失败", e);
+}
 importScripts("src/baseData.js", "src/baseDataSync.js", "src/fmsSync.js", "src/billGen.js", "src/monthFlow.js", "src/loopWorker.js");
 
 // 点工具栏图标打开侧边栏（侧边栏切换标签页也不会关，不像弹窗一失焦就消失）
@@ -525,6 +533,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ---- Loop 接单（可选，默认关闭；在扩展的「选项」页填写）----
 // 目前只会回答「连通测试」，不碰 FMS。以后加的每一种任务都必须在这里登记，没登记的一律什么都不做。
+// 清洗演练：下载账单明细、清洗，只报告会生成什么文件，不保存。
+// （在 FMS 里「导出」会产生一条导出任务记录，不改账单数据。）
+async function cleanDryRun(records, cfg) {
+  if (!CLEAN_READY) return "清洗演练没跑成：清洗模块没加载上";
+  const pick = MonthFlow.pickCleanable(records, cfg, BillGen.findBills);
+  if (!pick.ok) return "清洗演练：" + pick.reason;
+  const buffers = [];
+  for (const no of pick.billNos) {
+    const raw = await withBackgroundTab(
+      FMSSync.FMS_BILL_URL,
+      "FMS",
+      async (tabId) => {
+        const r = await runStep(tabId, FMSAutomation.downloadRawBillFile, [no], "下载账单 " + no);
+        const resp = await fetch(r.downloadUrl);
+        if (!resp.ok) throw new Error("下载原始账单失败: HTTP " + resp.status);
+        return resp.arrayBuffer();
+      },
+      { quiet: true, foreground: true }
+    );
+    buffers.push(raw);
+  }
+  const workbooks = buffers.map((b) => XLSX.read(b, { type: "array" }));
+  const source = workbooks.length === 1 ? workbooks[0] : FMSCleaner.mergeSources(workbooks);
+  const result = FMSCleaner.clean(source);
+  if (workbooks.length > 1) result.brand = cfg.brand;
+  const names = [];
+  for (const lang of ["zh", "en"]) {
+    const buf = await FMSCleaner.workbookToBuffer(FMSCleaner.buildWorkbook(result, lang));
+    names.push(FMSCleaner.buildOutputFileName(result, new Date(), lang) + "（" + Math.round(buf.byteLength / 1024) + " KB）");
+  }
+  return "清洗演练：" + pick.billNos.length + " 张账单，共 " + result.fmsExport.rows.length + " 行；会生成：" + names.join("；") + "；（没有保存任何文件）";
+}
+
 // 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
 // 品牌、店铺、月份来自 Loop 规则里的参数（JSON）；不认识的品牌或店铺直接拒绝，不猜。
 async function monthDryRun(job) {
@@ -539,7 +580,9 @@ async function monthDryRun(job) {
       async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records,
       { quiet: true }
     );
-    return { outcome: "done", summary: MonthFlow.plan(records, cfg, BillGen.findBills).summary };
+    const plan = MonthFlow.plan(records, cfg, BillGen.findBills);
+    if (cfg.mode !== "cleandry") return { outcome: "done", summary: plan.summary };
+    return { outcome: "done", summary: plan.summary + "\n" + (await cleanDryRun(records, cfg)) };
   } catch (e) {
     const msg = (e && e.message) || String(e);
     if (/登录已过期/.test(msg)) {
@@ -559,6 +602,8 @@ const loopWorker = LoopWorker.create({
   handlers: {
     "fms.ping": async () => ({ outcome: "done", summary: "收到：FMS 插件在线（v" + chrome.runtime.getManifest().version + "）" }),
     "fms.month.dryrun": monthDryRun,
+    "fms.month.cleandry": monthDryRun,
+    "rule:FMS·清洗演练(手动)": monthDryRun,
     "rule:FMS·月结演练": monthDryRun,
     "rule:FMS·月结演练(手动)": monthDryRun,
   },

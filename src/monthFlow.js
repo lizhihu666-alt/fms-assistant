@@ -26,6 +26,9 @@ const MonthFlow = (() => {
     NO_SETTLEMENT_REQUIRED: "无需结算：不用做什么",
   };
 
+  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存任何文件
+  const MODES = ["dryrun", "cleandry"];
+
   const norm = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, "");
 
   /** 上个月，格式 YYYY-MM（按调用方给的本地时间） */
@@ -47,14 +50,14 @@ const MonthFlow = (() => {
       return { ok: false, error: "规则里的参数不是合法的 JSON" };
     }
     if (!c || typeof c !== "object") return { ok: false, error: "规则里没有参数" };
-    if (c.mode !== "dryrun") return { ok: false, error: "目前只支持演练模式（mode 要写 dryrun），不会执行写入" };
+    if (!MODES.includes(c.mode)) return { ok: false, error: "目前只支持演练模式（mode 要写 " + MODES.join(" 或 ") + "），不会执行写入" };
     const brand = (brands || []).find((b) => norm(b) === norm(c.brand));
     if (!brand) return { ok: false, error: "品牌「" + c.brand + "」不在插件认识的清单里" };
     const shop = (shops || []).find((s) => norm(s) === norm(c.shop));
     if (!shop) return { ok: false, error: "店铺「" + c.shop + "」不在插件认识的清单里" };
     const month = c.month == null || c.month === "" ? previousMonth(now || new Date()) : String(c.month);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return { ok: false, error: "结算月份「" + month + "」格式不对，应为 YYYY-MM" };
-    return { ok: true, brand, shop, month, mode: "dryrun" };
+    return { ok: true, brand, shop, month, mode: c.mode };
   }
 
   /** records：账单列表；findBills：BillGen.findBills（从外面传进来，方便测试） */
@@ -76,7 +79,17 @@ const MonthFlow = (() => {
     };
   }
 
-  return { STATUS, NEXT, previousMonth, parseConfig, plan };
+  /** 清洗只处理「待生成请款单」（基础数据完整）的账单；只要有一张还「待确认」就不清洗，因为数据不全。 */
+  function pickCleanable(records, cfg, findBills) {
+    const bills = findBills(records, cfg.brand, cfg.shop, cfg.month);
+    if (!bills.length) return { ok: false, reason: "还没有账单，没法清洗" };
+    if (bills.some((b) => b.settlementStatus === "PENDING_CONFIRM")) return { ok: false, reason: "还有账单是「待确认」（缺基础数据），先补数据再清洗" };
+    const ready = bills.filter((b) => b.settlementStatus === "PENDING_GENERATE_REQUEST");
+    if (!ready.length) return { ok: false, reason: "没有「待生成请款单」的账单，不需要清洗" };
+    return { ok: true, billNos: ready.map((b) => b.settlementNo) };
+  }
+
+  return { STATUS, NEXT, MODES, previousMonth, parseConfig, plan, pickCleanable };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = MonthFlow;
