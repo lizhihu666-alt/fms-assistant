@@ -593,6 +593,39 @@ async function cleanBills(records, cfg, save) {
   return save ? head + "已保存到 下载/" + names.join("；下载/") : head + "会生成：" + names.join("；") + "；（没有保存任何文件）";
 }
 
+// 生成账单（会写 FMS）：只在「这个月还没有账单」时才生成；已经有就什么都不做。
+// 防重复：提交过生成之后 30 分钟内，即使列表里还没看到账单，也不再提交第二次。
+async function generateIfMissing(cfg) {
+  if (MonthFlow.isTooEarly(cfg.month, new Date())) return "没生成：结算月份 " + cfg.month + " 还没到可以生成账单的时候（只处理上个月及更早）";
+  const key = cfg.brand + "|" + cfg.shop + "|" + cfg.month;
+  const out = await withBackgroundTab(
+    FMSSync.FMS_BILL_URL,
+    "FMS",
+    async (tabId) => {
+      const read = async () => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records;
+      let bills = BillGen.findBills(await read(), cfg.brand, cfg.shop, cfg.month);
+      if (bills.length) return { bills, submitted: false };
+      const last = ((await chrome.storage.local.get("loopGenLast")).loopGenLast || {})[key];
+      if (last && Date.now() - last < 30 * 60 * 1000) return { bills, submitted: false, blocked: true };
+      const g = await runStep(tabId, BillGen.generateBill, [cfg.brand, cfg.shop, cfg.month], "生成账单");
+      const all = (await chrome.storage.local.get("loopGenLast")).loopGenLast || {};
+      all[key] = Date.now();
+      await chrome.storage.local.set({ loopGenLast: all });
+      for (let i = 0; i < 8 && !bills.length; i++) {
+        await new Promise((r) => setTimeout(r, 6000));
+        bills = BillGen.findBills(await read(), cfg.brand, cfg.shop, cfg.month);
+      }
+      return { bills, submitted: true, messages: g.messages || [] };
+    },
+    { quiet: true, foreground: true }
+  );
+  const nos = out.bills.map((b) => b.settlementNo + (b.siteCode ? "（" + b.siteCode + "）" : "") + "，" + (MonthFlow.STATUS[b.settlementStatus] || b.settlementStatus)).join("；");
+  if (out.blocked) return "没重复生成：30 分钟内已经提交过这个月的生成，请到 FMS 账单总表或任务日志确认";
+  if (!out.submitted) return "账单已存在，没有重复生成：" + nos;
+  if (!out.bills.length) return "已提交生成，但暂时没在账单列表里看到，可能还在处理。请稍后到 FMS 确认，不要重复生成" + (out.messages.length ? "（FMS 提示：" + out.messages.join("；") + "）" : "");
+  return "已生成账单：" + nos;
+}
+
 // 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
 // 品牌、店铺、月份来自 Loop 规则里的参数（JSON）；不认识的品牌或店铺直接拒绝，不猜。
 async function monthDryRun(job) {
@@ -601,6 +634,7 @@ async function monthDryRun(job) {
   const cfg = MonthFlow.parseConfig((job.rule && job.rule.prompt) || "", BillGen.BRANDS, BillGen.SHOPS, new Date());
   if (!cfg.ok) return { outcome: "done", summary: "待你处理：规则里的参数有问题：" + cfg.error };
   try {
+    if (cfg.mode === "generate") return { outcome: "done", summary: "生成账单：" + cfg.brand + " / " + cfg.shop + " / " + cfg.month + " → " + (await generateIfMissing(cfg)) };
     const records = await withBackgroundTab(
       FMSSync.FMS_BILL_URL,
       "FMS",
@@ -631,6 +665,8 @@ const loopWorker = LoopWorker.create({
     "fms.month.dryrun": monthDryRun,
     "fms.month.cleandry": monthDryRun,
     "fms.month.clean": monthDryRun,
+    "fms.month.generate": monthDryRun,
+    "rule:FMS·生成账单(手动)": monthDryRun,
     "rule:FMS·清洗对账表(手动)": monthDryRun,
     "rule:FMS·清洗演练(手动)": monthDryRun,
     "rule:FMS·月结演练": monthDryRun,

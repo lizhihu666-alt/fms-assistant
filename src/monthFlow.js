@@ -26,8 +26,8 @@ const MonthFlow = (() => {
     NO_SETTLEMENT_REQUIRED: "无需结算：不用做什么",
   };
 
-  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存；clean：清洗后保存到下载文件夹（唯一会写本机文件的模式）
-  const MODES = ["dryrun", "cleandry", "clean"];
+  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存；clean：清洗后保存到下载文件夹；generate：这个月还没有账单时，在 FMS 里生成账单（会写 FMS，可在 FMS 里撤销）
+  const MODES = ["dryrun", "cleandry", "clean", "generate"];
 
   const norm = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, "");
 
@@ -89,7 +89,12 @@ const MonthFlow = (() => {
     return { ok: true, billNos: ready.map((b) => b.settlementNo) };
   }
 
-  return { STATUS, NEXT, MODES, previousMonth, parseConfig, plan, pickCleanable };
+  /** 结算月份还没结束（或还没到可生成的时候）就不生成：只允许生成「上个月及更早」的账单 */
+  function isTooEarly(month, now) {
+    return month > previousMonth(now);
+  }
+
+  return { STATUS, NEXT, MODES, isTooEarly, previousMonth, parseConfig, plan, pickCleanable };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = MonthFlow;
