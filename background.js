@@ -626,6 +626,47 @@ async function generateIfMissing(cfg) {
   return "已生成账单：" + nos;
 }
 
+// 补基础数据演练：对「待确认」账单读缺价明细 → 去 EH 查结算价 → 对上号 → 做确定性检查。
+// 只报告，不导入、不重新生成账单（EH 页面只读查询）。
+async function baseDry(records, cfg) {
+  const bills = BillGen.findBills(records, cfg.brand, cfg.shop, cfg.month);
+  const pend = bills.filter((b) => b.settlementStatus === "PENDING_CONFIRM");
+  if (!pend.length) return "补基础数据演练：没有「待确认」的账单，不需要补";
+  const missing = [];
+  let total = 0;
+  for (const b of pend) {
+    const one = await withBackgroundTab(
+      BaseDataSync.FMS_BILL_URL,
+      "FMS",
+      (tabId) => runStep(tabId, BaseDataSync.fetchMissingPriceRows, [b.settlementNo], "读取缺价明细"),
+      { quiet: true }
+    );
+    missing.push(...one.missing);
+    total += one.total;
+  }
+  if (!missing.length) return "补基础数据演练：" + pend.length + " 张待确认账单共 " + total + " 行，没有缺结算价的行（状态可能需要在 FMS 里刷新）";
+  const plan = FMSBaseData.planMissing(missing);
+  let eh = {};
+  if (plan.jobs.length) {
+    const res = await withBackgroundTab(
+      BaseDataSync.EH_PRICING_URL,
+      "EH",
+      (tabId) => runStep(tabId, BaseDataSync.fetchEhCosts, [plan.jobs], "读取 EH 结算价"),
+      { quiet: true, foreground: true }
+    );
+    eh = res.results;
+  }
+  const out = FMSBaseData.resolve(plan.items, eh);
+  const chk = FMSBaseData.checkRows(out.rows);
+  const un = out.unresolved.slice(0, 5).map((u) => u.item.sku + "：" + u.reason);
+  return (
+    "补基础数据演练：" + pend.length + " 张待确认账单，缺价 " + missing.length + " 行 / " + plan.items.length + " 个 SKU；EH 对上 " + out.rows.length + " 个，对不上 " + out.unresolved.length + " 个" +
+    (un.length ? "（" + un.join("；") + (out.unresolved.length > 5 ? "…" : "") + "）" : "") +
+    "；检查：" + (chk.ok ? "全部通过" : chk.warnings.slice(0, 5).join("；")) +
+    " → 计划：" + (out.unresolved.length || !chk.ok ? "有疑问，会停下来问你" : "没疑问，（影子期）先把摘要发给你再导入") + "（演练，没有导入）"
+  );
+}
+
 // 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
 // 品牌、店铺、月份来自 Loop 规则里的参数（JSON）；不认识的品牌或店铺直接拒绝，不猜。
 async function monthDryRun(job) {
@@ -648,6 +689,14 @@ async function monthDryRun(job) {
       for (const r of mine) (by[r.accountingMonth] = by[r.accountingMonth] || []).push(r.settlementNo + "/" + (MonthFlow.STATUS[r.settlementStatus] || r.settlementStatus));
       const ms = Object.keys(by).sort();
       return { outcome: "done", summary: "账单月份清单（只读）：" + cfg.brand + " / " + cfg.shop + " 共 " + mine.length + " 张；" + (ms.map((m) => m + "：" + by[m].join("、")).join("；") || "没有账单") };
+    }
+    if (cfg.mode === "pending") {
+      const mine = records.filter((r) => r.settlementStatus === "PENDING_CONFIRM" && String(r.shopCode).toLowerCase() === cfg.shop.toLowerCase());
+      return { outcome: "done", summary: "待确认账单（只读）：" + cfg.shop + " 共 " + mine.length + " 张" + (mine.length ? "：" + mine.map((r) => r.brandName + " " + r.accountingMonth + " " + r.settlementNo).join("；") : "") };
+    }
+    if (cfg.mode === "basedry") {
+      const plan0 = MonthFlow.plan(records, cfg, BillGen.findBills);
+      return { outcome: "done", summary: plan0.summary + "\n" + (await baseDry(records, cfg)) };
     }
     if (cfg.mode === "dryrun") return { outcome: "done", summary: plan.summary };
     return { outcome: "done", summary: plan.summary + "\n" + (await cleanBills(records, cfg, cfg.mode === "clean")) };
@@ -674,6 +723,10 @@ const loopWorker = LoopWorker.create({
     "fms.month.clean": monthDryRun,
     "fms.month.generate": monthDryRun,
     "fms.month.list": monthDryRun,
+    "fms.month.pending": monthDryRun,
+    "rule:FMS·待确认账单清单(手动)": monthDryRun,
+    "rule:FMS·补基础数据演练(手动)": monthDryRun,
+    "fms.month.basedry": monthDryRun,
     "rule:FMS·账单月份清单(手动)": monthDryRun,
     "rule:FMS·生成账单(手动)": monthDryRun,
     "rule:FMS·清洗对账表(手动)": monthDryRun,

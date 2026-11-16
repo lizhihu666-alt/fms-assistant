@@ -26,8 +26,8 @@ const MonthFlow = (() => {
     NO_SETTLEMENT_REQUIRED: "无需结算：不用做什么",
   };
 
-  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存；clean：清洗后保存到下载文件夹；generate：这个月还没有账单时，在 FMS 里生成账单（会写 FMS，可在 FMS 里撤销）
-  const MODES = ["dryrun", "cleandry", "clean", "generate", "list"];
+  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存；clean：清洗后保存到下载文件夹；pending：列出该店铺所有品牌「待确认」的账单；basedry：对「待确认」账单查缺价明细和 EH 结算价、做检查，只报告不导入；generate：这个月还没有账单时，在 FMS 里生成账单（会写 FMS，可在 FMS 里撤销）
+  const MODES = ["dryrun", "cleandry", "clean", "generate", "list", "pending", "basedry"];
 
   const norm = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, "");
 

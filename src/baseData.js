@@ -129,7 +129,35 @@ const FMSBaseData = (() => {
     return `基础数据_${billNo}_${ymd}.xlsx`;
   }
 
-  return { SHOP_TO_CHANNEL, SHEET_NAME, HEADERS, channelOf, planMissing, resolve, toWorkbook, fileName };
+  /**
+   * 导入前的确定性检查（不靠 AI）：对 resolve 出来的模板行找「看着不对劲」的地方，返回警告列表。
+   * 有警告不代表一定错，但自动流程遇到任何警告都要停下来问人，不直接导入。
+   *  - 同一个 Style 下各行结算单价差别超过 3 倍（可能串了款或单位不对）
+   *  - 缺 Brand SKU
+   *  - 同一个 站点+店铺+MM SKU 出现多行（重复）
+   */
+  function checkRows(rows) {
+    const warnings = [];
+    const byStyle = new Map();
+    const seen = new Set();
+    for (const r of rows) {
+      const k = [r["站点"], r["店铺"], r["MM SKU"]].join("|");
+      if (seen.has(k)) warnings.push("重复行：" + k);
+      seen.add(k);
+      if (!r["Brand SKU"]) warnings.push("缺 Brand SKU：" + r["MM SKU"]);
+      const sk = [r["品牌"], r["MM Style"]].join("|");
+      if (!byStyle.has(sk)) byStyle.set(sk, []);
+      byStyle.get(sk).push(Number(r["结算单价"]));
+    }
+    for (const [sk, prices] of byStyle) {
+      const lo = Math.min(...prices);
+      const hi = Math.max(...prices);
+      if (lo > 0 && hi / lo > 3) warnings.push("同款价差过大（" + sk + "：" + lo + " ~ " + hi + "）");
+    }
+    return { ok: warnings.length === 0, warnings };
+  }
+
+  return { SHOP_TO_CHANNEL, SHEET_NAME, HEADERS, channelOf, planMissing, resolve, checkRows, toWorkbook, fileName };
 })();
 
 if (typeof module !== "undefined") module.exports = FMSBaseData;
