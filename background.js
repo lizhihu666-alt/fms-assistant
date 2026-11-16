@@ -642,6 +642,13 @@ async function monthDryRun(job) {
       { quiet: true }
     );
     const plan = MonthFlow.plan(records, cfg, BillGen.findBills);
+    if (cfg.mode === "list") {
+      const mine = records.filter((r) => String(r.brandName).toLowerCase() === cfg.brand.toLowerCase() && String(r.shopCode).toLowerCase() === cfg.shop.toLowerCase());
+      const by = {};
+      for (const r of mine) (by[r.accountingMonth] = by[r.accountingMonth] || []).push(r.settlementNo + "/" + (MonthFlow.STATUS[r.settlementStatus] || r.settlementStatus));
+      const ms = Object.keys(by).sort();
+      return { outcome: "done", summary: "账单月份清单（只读）：" + cfg.brand + " / " + cfg.shop + " 共 " + mine.length + " 张；" + (ms.map((m) => m + "：" + by[m].join("、")).join("；") || "没有账单") };
+    }
     if (cfg.mode === "dryrun") return { outcome: "done", summary: plan.summary };
     return { outcome: "done", summary: plan.summary + "\n" + (await cleanBills(records, cfg, cfg.mode === "clean")) };
   } catch (e) {
@@ -666,6 +673,8 @@ const loopWorker = LoopWorker.create({
     "fms.month.cleandry": monthDryRun,
     "fms.month.clean": monthDryRun,
     "fms.month.generate": monthDryRun,
+    "fms.month.list": monthDryRun,
+    "rule:FMS·账单月份清单(手动)": monthDryRun,
     "rule:FMS·生成账单(手动)": monthDryRun,
     "rule:FMS·清洗对账表(手动)": monthDryRun,
     "rule:FMS·清洗演练(手动)": monthDryRun,
