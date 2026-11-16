@@ -752,6 +752,51 @@ async function baseApplied(cfg) {
   return "已导入 " + draft.rows.length + " 个 SKU 的基础数据并重新生成账单：" + txt + (left.length ? "。仍是「待确认」的账单，请到 FMS「导入导出任务」看导入结果" : "。可以继续清洗对账表");
 }
 
+// 整月流程：每次都先读 FMS 现在的真实状态，再决定往前走哪一步（所以重跑、你批准后接着跑都是同一套逻辑）：
+//   没账单 → 发卡片问你要不要生成（批准后才生成）
+//   有「待确认」 → 算补数据草稿发卡片（批准后才导入并重新生成账单）；有疑问只告诉你
+//   基础数据齐了 → 清洗对账表并保存到下载文件夹
+//   然后停下：发票和请款、提交付款都是你自己来
+// 不会点任何「提交付款」「请款」之类的按钮。
+async function monthRun(cfg, answers) {
+  const readList = () =>
+    withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records, { quiet: true });
+  const answered = (t) => answers.some((a) => a.chosen === t);
+  const label = cfg.brand + " / " + cfg.shop + " / " + cfg.month;
+  const log = [];
+  let records = await readList();
+  let bills = BillGen.findBills(records, cfg.brand, cfg.shop, cfg.month);
+
+  if (!bills.length) {
+    if (!answered("生成账单")) {
+      return {
+        summary: "待你批示：" + label + " 还没有账单，要不要生成",
+        ask: [{ title: "要生成账单吗：" + label, text: "FMS 里还没有这个月的账单。点「生成账单」后，我会在 FMS 的「账单生成」里提交（可在 FMS 里撤销），然后接着往下走。", options: ["生成账单", "这个月我自己做"], recommend: 0, key: "fms-gen|" + draftKey(cfg), about: "批准后：生成账单，再继续补数据和清洗" }],
+      };
+    }
+    log.push(await generateIfMissing(cfg));
+    records = await readList();
+    bills = BillGen.findBills(records, cfg.brand, cfg.shop, cfg.month);
+    if (!bills.length) return { summary: label + "：" + log.join("；") + "。暂时没在列表里看到账单，稍后重新触发" };
+  }
+
+  if (bills.some((b) => b.settlementStatus === "PENDING_CONFIRM")) {
+    if (answered("导入并重新生成账单")) {
+      log.push(await baseApplied(cfg));
+      records = await readList();
+    } else {
+      const p = await baseProposeCard(records, cfg);
+      if (p.ask) return { summary: log.concat(p.summary).join("；"), ask: p.ask };
+      log.push(p.summary);
+    }
+  }
+
+  const pick = MonthFlow.pickCleanable(records, cfg, BillGen.findBills);
+  log.push(pick.ok ? await cleanBills(records, cfg, true) : "清洗：" + pick.reason);
+  log.push(MonthFlow.plan(records, cfg, BillGen.findBills).summary.replace(/（演练，没有点任何按钮）/, ""));
+  return { summary: "整月流程 " + label + "：" + log.join("；") };
+}
+
 // 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
 // 品牌、店铺、月份来自 Loop 规则里的参数（JSON）；不认识的品牌或店铺直接拒绝，不猜。
 async function monthDryRun(job) {
@@ -764,6 +809,7 @@ async function monthDryRun(job) {
   const cfg = MonthFlow.parseConfig((job.rule && job.rule.prompt) || "", BillGen.BRANDS, BillGen.SHOPS, new Date());
   if (!cfg.ok) return { outcome: "done", summary: "待你处理：规则里的参数有问题：" + cfg.error };
   try {
+    if (cfg.mode === "month") return Object.assign({ outcome: "done" }, await monthRun(cfg, answers));
     if (cfg.mode === "generate") return { outcome: "done", summary: "生成账单：" + cfg.brand + " / " + cfg.shop + " / " + cfg.month + " → " + (await generateIfMissing(cfg)) };
     const records = await withBackgroundTab(
       FMSSync.FMS_BILL_URL,
@@ -822,12 +868,15 @@ const loopWorker = LoopWorker.create({
     "rule:FMS·补基础数据演练(手动)": monthDryRun,
     "fms.month.basedry": monthDryRun,
     "fms.month.base": monthDryRun,
+    "fms.month.run": monthDryRun,
+    "rule:FMS·月结全流程(手动)": monthDryRun,
     "rule:FMS·补基础数据(手动)": monthDryRun,
     "rule:FMS·账单月份清单(手动)": monthDryRun,
     "rule:FMS·生成账单(手动)": monthDryRun,
     "rule:FMS·清洗对账表(手动)": monthDryRun,
     "rule:FMS·清洗演练(手动)": monthDryRun,
     "rule:FMS·月结演练": monthDryRun,
+    "rule:FMS·月结流程": monthDryRun,
     "rule:FMS·月结演练(手动)": monthDryRun,
   },
 });
