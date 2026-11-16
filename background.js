@@ -626,12 +626,12 @@ async function generateIfMissing(cfg) {
   return "已生成账单：" + nos;
 }
 
-// 补基础数据演练：对「待确认」账单读缺价明细 → 去 EH 查结算价 → 对上号 → 做确定性检查。
-// 只报告，不导入、不重新生成账单（EH 页面只读查询）。
-async function baseDry(records, cfg) {
+// 补基础数据：对「待确认」账单读缺价明细 → 去 EH 查结算价 → 对上号 → 做确定性检查，得到草稿。
+// 这一步只读（EH、FMS 都只是查询），不导入。
+async function baseDraft(records, cfg) {
   const bills = BillGen.findBills(records, cfg.brand, cfg.shop, cfg.month);
   const pend = bills.filter((b) => b.settlementStatus === "PENDING_CONFIRM");
-  if (!pend.length) return "补基础数据演练：没有「待确认」的账单，不需要补";
+  if (!pend.length) return { none: "没有「待确认」的账单，不需要补" };
   const missing = [];
   let total = 0;
   for (const b of pend) {
@@ -644,7 +644,7 @@ async function baseDry(records, cfg) {
     missing.push(...one.missing);
     total += one.total;
   }
-  if (!missing.length) return "补基础数据演练：" + pend.length + " 张待确认账单共 " + total + " 行，没有缺结算价的行（状态可能需要在 FMS 里刷新）";
+  if (!missing.length) return { none: pend.length + " 张待确认账单共 " + total + " 行，没有缺结算价的行（状态可能需要在 FMS 里刷新）" };
   const plan = FMSBaseData.planMissing(missing);
   let eh = {};
   if (plan.jobs.length) {
@@ -658,13 +658,98 @@ async function baseDry(records, cfg) {
   }
   const out = FMSBaseData.resolve(plan.items, eh);
   const chk = FMSBaseData.checkRows(out.rows);
-  const un = out.unresolved.slice(0, 5).map((u) => u.item.sku + "：" + u.reason);
+  return { pend, billNos: pend.map((b) => b.settlementNo), missingCount: missing.length, items: plan.items, rows: out.rows, unresolved: out.unresolved, warnings: chk.warnings };
+}
+
+const draftDoubts = (d) => d.unresolved.length > 0 || d.warnings.length > 0 || !d.rows.length;
+const draftKey = (cfg) => [cfg.brand, cfg.shop, cfg.month].join("|");
+
+async function baseDry(records, cfg) {
+  const d = await baseDraft(records, cfg);
+  if (d.none) return "补基础数据演练：" + d.none;
+  const un = d.unresolved.slice(0, 5).map((u) => u.item.sku + "：" + u.reason);
   return (
-    "补基础数据演练：" + pend.length + " 张待确认账单，缺价 " + missing.length + " 行 / " + plan.items.length + " 个 SKU；EH 对上 " + out.rows.length + " 个，对不上 " + out.unresolved.length + " 个" +
-    (un.length ? "（" + un.join("；") + (out.unresolved.length > 5 ? "…" : "") + "）" : "") +
-    "；检查：" + (chk.ok ? "全部通过" : chk.warnings.slice(0, 5).join("；")) +
-    " → 计划：" + (out.unresolved.length || !chk.ok ? "有疑问，会停下来问你" : "没疑问，（影子期）先把摘要发给你再导入") + "（演练，没有导入）"
+    "补基础数据演练：" + d.pend.length + " 张待确认账单，缺价 " + d.missingCount + " 行 / " + d.items.length + " 个 SKU；EH 对上 " + d.rows.length + " 个，对不上 " + d.unresolved.length + " 个" +
+    (un.length ? "（" + un.join("；") + (d.unresolved.length > 5 ? "…" : "") + "）" : "") +
+    "；检查：" + (d.warnings.length ? d.warnings.slice(0, 5).join("；") : "全部通过") +
+    " → 计划：" + (draftDoubts(d) ? "有疑问，会停下来问你" : "没疑问，（影子期）先把摘要发给你再导入") + "（演练，没有导入）"
   );
+}
+
+// 第一步：算草稿，发审批卡片（有疑问就只告诉你，不给「导入」选项）。草稿存在本机，批准后按草稿导入。
+async function baseProposeCard(records, cfg) {
+  const d = await baseDraft(records, cfg);
+  if (d.none) return { summary: "补基础数据：" + d.none };
+  const label = cfg.brand + " / " + cfg.shop + " / " + cfg.month;
+  if (draftDoubts(d)) {
+    const lines = [].concat(
+      d.unresolved.slice(0, 15).map((u) => u.item.sku + "（" + u.item.shop + "/" + u.item.site + "）：" + u.reason),
+      d.warnings.slice(0, 10)
+    );
+    return {
+      summary: "待你处理：补基础数据有疑问，没有导入（" + label + "）",
+      ask: [{ title: "补基础数据有疑问：" + label, text: "缺价 " + d.items.length + " 个 SKU，EH 对上 " + d.rows.length + " 个。需要你人工处理：\n" + lines.join("\n"), options: ["知道了，我自己处理"], recommend: 0, key: "fms-base-doubt|" + draftKey(cfg), about: "有疑问的草稿不会自动导入" }],
+    };
+  }
+  await chrome.storage.local.set({ loopBaseDraft: { key: draftKey(cfg), at: Date.now(), billNos: d.billNos, rows: d.rows } });
+  const sample = d.rows.slice(0, 30).map((r) => r["MM SKU"] + "（" + r["站点"] + "/" + r["店铺"] + "）→ " + r["结算单价"] + " " + r["结算币种"]);
+  return {
+    summary: "待你批示：补基础数据草稿已备好，等你点「导入并重新生成账单」（" + label + "，" + d.rows.length + " 个 SKU）",
+    ask: [{
+      title: "补基础数据，要导入吗：" + label,
+      text: d.billNos.length + " 张账单（" + d.billNos.join("、") + "），缺价 " + d.missingCount + " 行 / " + d.rows.length + " 个 SKU，EH 全部对上、检查全部通过。\n" + sample.join("\n") + (d.rows.length > 30 ? "\n…还有 " + (d.rows.length - 30) + " 个" : "") + "\n点「导入并重新生成账单」后，会把这份模板导入 FMS 基础数据，再重新生成账单。导入可以覆盖重导。",
+      options: ["导入并重新生成账单", "先不导入，我自己看"],
+      recommend: 0,
+      key: "fms-base|" + draftKey(cfg),
+      about: "批准后：按本机保存的草稿导入基础数据，再重新生成账单",
+    }],
+  };
+}
+
+// 第二步：你批准之后才会走到这里：按草稿导入 → 重新生成账单 → 报告状态。
+async function baseApplied(cfg) {
+  const draft = (await chrome.storage.local.get("loopBaseDraft")).loopBaseDraft;
+  if (!draft || draft.key !== draftKey(cfg)) return "没导入：找不到对应的草稿，请重新触发一次";
+  if (Date.now() - draft.at > 24 * 3600 * 1000) return "没导入：草稿已超过 24 小时，请重新触发一次";
+  // 导入前再确认一遍：这些账单现在还是「待确认」
+  const records = await withBackgroundTab(
+    FMSSync.FMS_BILL_URL,
+    "FMS",
+    async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records,
+    { quiet: true }
+  );
+  const still = draft.billNos.filter((no) => (records.find((r) => r.settlementNo === no) || {}).settlementStatus === "PENDING_CONFIRM");
+  if (!still.length) return "没导入：这些账单已经不是「待确认」了，不需要再补";
+  const wb = FMSBaseData.toWorkbook(ExcelJS, draft.rows);
+  const buf = new Uint8Array(await wb.xlsx.writeBuffer());
+  let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  const imp = await runImport(FMSBaseData.fileName(draft.billNos[0]), btoa(bin));
+  if (!imp.ok) return "导入失败：" + String(imp.error).split("\n")[0] + "（没有重新生成账单）";
+  await chrome.storage.local.remove("loopBaseDraft");
+  await new Promise((r) => setTimeout(r, 15000));
+  const status = await withBackgroundTab(
+    FMSSync.FMS_BILL_URL,
+    "FMS",
+    async (tabId) => {
+      const read = async () => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records;
+      const stOf = (rs) => Object.fromEntries(still.map((no) => [no, (rs.find((r) => r.settlementNo === no) || {}).settlementStatus]));
+      let st = stOf(await read());
+      for (let round = 1; round <= 3 && still.some((no) => st[no] === "PENDING_CONFIRM"); round++) {
+        for (const no of still.filter((n) => st[n] === "PENDING_CONFIRM")) await runStep(tabId, BillGen.regenerateBill, [no], "重新生成");
+        for (let i = 0; i < 6; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          st = stOf(await read());
+          if (!still.some((no) => st[no] === "PENDING_CONFIRM")) break;
+        }
+      }
+      return st;
+    },
+    { quiet: true, foreground: true }
+  );
+  const txt = still.map((no) => no + "：" + (MonthFlow.STATUS[status[no]] || status[no])).join("；");
+  const left = still.filter((no) => status[no] === "PENDING_CONFIRM");
+  return "已导入 " + draft.rows.length + " 个 SKU 的基础数据并重新生成账单：" + txt + (left.length ? "。仍是「待确认」的账单，请到 FMS「导入导出任务」看导入结果" : "。可以继续清洗对账表");
 }
 
 // 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
@@ -672,6 +757,10 @@ async function baseDry(records, cfg) {
 async function monthDryRun(job) {
   const answers = (job.context && job.context.answers) || [];
   if (answers.some((a) => a.chosen === "这个月我自己做")) return { outcome: "done", summary: "已按你的决定：这个月不自动处理" };
+  if (answers.some((a) => a.chosen === "先不导入，我自己看" || a.chosen === "知道了，我自己处理")) {
+    await chrome.storage.local.remove("loopBaseDraft");
+    return { outcome: "done", summary: "已按你的决定：没有导入，草稿已丢弃" };
+  }
   const cfg = MonthFlow.parseConfig((job.rule && job.rule.prompt) || "", BillGen.BRANDS, BillGen.SHOPS, new Date());
   if (!cfg.ok) return { outcome: "done", summary: "待你处理：规则里的参数有问题：" + cfg.error };
   try {
@@ -693,6 +782,11 @@ async function monthDryRun(job) {
     if (cfg.mode === "pending") {
       const mine = records.filter((r) => r.settlementStatus === "PENDING_CONFIRM" && String(r.shopCode).toLowerCase() === cfg.shop.toLowerCase());
       return { outcome: "done", summary: "待确认账单（只读）：" + cfg.shop + " 共 " + mine.length + " 张" + (mine.length ? "：" + mine.map((r) => r.brandName + " " + r.accountingMonth + " " + r.settlementNo).join("；") : "") };
+    }
+    if (cfg.mode === "base") {
+      if (answers.some((a) => a.chosen === "导入并重新生成账单")) return { outcome: "done", summary: "补基础数据：" + cfg.brand + " / " + cfg.shop + " / " + cfg.month + " → " + (await baseApplied(cfg)) };
+      const p = await baseProposeCard(records, cfg);
+      return { outcome: "done", summary: p.summary, ask: p.ask };
     }
     if (cfg.mode === "basedry") {
       const plan0 = MonthFlow.plan(records, cfg, BillGen.findBills);
@@ -727,6 +821,8 @@ const loopWorker = LoopWorker.create({
     "rule:FMS·待确认账单清单(手动)": monthDryRun,
     "rule:FMS·补基础数据演练(手动)": monthDryRun,
     "fms.month.basedry": monthDryRun,
+    "fms.month.base": monthDryRun,
+    "rule:FMS·补基础数据(手动)": monthDryRun,
     "rule:FMS·账单月份清单(手动)": monthDryRun,
     "rule:FMS·生成账单(手动)": monthDryRun,
     "rule:FMS·清洗对账表(手动)": monthDryRun,
