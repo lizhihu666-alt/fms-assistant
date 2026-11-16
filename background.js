@@ -5,7 +5,7 @@
 // 里面正在跑的任务也跟着停了。耗时的任务（补基础数据要后台开 FMS 和 EH 两个标签页）改在这里跑，
 // 弹窗关了也不受影响；进度写进 chrome.storage.local，弹窗重新打开（或一直开着）都能看到最新状态。
 
-importScripts("src/baseData.js", "src/baseDataSync.js", "src/fmsSync.js", "src/billGen.js", "src/loopWorker.js");
+importScripts("src/baseData.js", "src/baseDataSync.js", "src/fmsSync.js", "src/billGen.js", "src/monthFlow.js", "src/loopWorker.js");
 
 // 点工具栏图标打开侧边栏（侧边栏切换标签页也不会关，不像弹窗一失焦就消失）
 if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
@@ -60,6 +60,7 @@ function waitTabComplete(tabId, timeoutMs = 30000) {
 const TEMP_TABS = new Set();
 async function withBackgroundTab(url, name, fn, opts) {
   const foreground = !!(opts && opts.foreground);
+  const quiet = !!(opts && opts.quiet); // 自动任务用：登录过期时不把登录页弹到前台，只报错
   const target = new URL(url);
   let prevTab = null;
   if (foreground) {
@@ -75,6 +76,7 @@ async function withBackgroundTab(url, name, fn, opts) {
     return u.origin === target.origin && u.pathname.startsWith(target.pathname);
   };
   const needLogin = async () => {
+    if (quiet) throw new Error(`${name} 登录已过期`);
     keep = true;
     await chrome.tabs.update(tab.id, { active: true });
     throw new Error(`${name} 登录已过期，已为你打开登录页。登录完成后回到插件，重新操作一次。`);
@@ -523,11 +525,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ---- Loop 接单（可选，默认关闭；在扩展的「选项」页填写）----
 // 目前只会回答「连通测试」，不碰 FMS。以后加的每一种任务都必须在这里登记，没登记的一律什么都不做。
+// 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
+// 品牌、店铺、月份来自 Loop 规则里的参数（JSON）；不认识的品牌或店铺直接拒绝，不猜。
+async function monthDryRun(job) {
+  const answers = (job.context && job.context.answers) || [];
+  if (answers.some((a) => a.chosen === "这个月我自己做")) return { outcome: "done", summary: "已按你的决定：这个月不自动处理" };
+  const cfg = MonthFlow.parseConfig((job.rule && job.rule.prompt) || "", BillGen.BRANDS, BillGen.SHOPS, new Date());
+  if (!cfg.ok) return { outcome: "done", summary: "待你处理：规则里的参数有问题：" + cfg.error };
+  try {
+    const records = await withBackgroundTab(
+      FMSSync.FMS_BILL_URL,
+      "FMS",
+      async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records,
+      { quiet: true }
+    );
+    return { outcome: "done", summary: MonthFlow.plan(records, cfg, BillGen.findBills).summary };
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    if (/登录已过期/.test(msg)) {
+      return {
+        outcome: "done",
+        summary: "待你处理：FMS 登录已过期",
+        ask: [{ title: "FMS 登录过期了", text: "月结演练读不到账单。请在浏览器里登录 FMS，登录好再点第一个选项。", options: ["已登录，再试一次", "这个月我自己做"], recommend: 0, key: "fms-login", about: "登录后重新读一遍账单列表" }],
+      };
+    }
+    return { outcome: "failed", error: msg, summary: "没跑成：" + msg.split("\n")[0] };
+  }
+}
+
 const loopWorker = LoopWorker.create({
   getSettings: async () => (await chrome.storage.local.get("loop")).loop,
   setStatus: (s) => chrome.storage.local.set({ loopStatus: s }),
   handlers: {
     "fms.ping": async () => ({ outcome: "done", summary: "收到：FMS 插件在线（v" + chrome.runtime.getManifest().version + "）" }),
+    "fms.month.dryrun": monthDryRun,
+    "rule:FMS·月结演练": monthDryRun,
+    "rule:FMS·月结演练(手动)": monthDryRun,
   },
 });
 function ensureLoop() {

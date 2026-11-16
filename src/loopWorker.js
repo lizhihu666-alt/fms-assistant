@@ -74,7 +74,8 @@ const LoopWorker = (() => {
           // 报告「开始了」失败不影响干活，结果交回时会再核对
         }
         const ev = (job.context && job.context.events && job.context.events[0]) || {};
-        const handler = handlers[ev.type];
+        // 先按事件类型找；定时触发的事件没有固定类型，就按规则名找（"rule:规则名"）。都没登记就什么都不做。
+        const handler = handlers[ev.type] || handlers["rule:" + ((job.rule && job.rule.name) || "")];
         if (!handler) {
           result = { outcome: "nothing", summary: "没事可做：不认识的任务类型「" + (ev.type || "空") + "」，什么都没做" };
         } else {
