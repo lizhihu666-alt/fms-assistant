@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FMS付款助手 · Loop 连接</title>
+<style>
+  body { font: 14px/1.6 "Microsoft YaHei UI", system-ui, sans-serif; margin: 0; padding: 32px 20px; background: #f6f7f9; color: #1d2330; }
+  main { max-width: 520px; margin: 0 auto; background: #fff; border: 1px solid #e3e6ec; border-radius: 12px; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 18px; }
+  label { display: block; margin: 14px 0 4px; font-weight: 600; }
+  input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #cfd5df; border-radius: 8px; font: inherit; }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+  button { font: inherit; padding: 8px 18px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+  button:hover { background: #1d4fd0; }
+  #status { margin-top: 18px; padding: 10px 12px; border-radius: 8px; background: #f1f3f6; min-height: 20px; }
+  #status.on { background: #e6f4ea; color: #0f6a2c; }
+  #status.error { background: #fdecec; color: #a12121; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Loop 连接</h1>
+  <label for="url">Loop 地址</label>
+  <input id="url" type="text" value="http://127.0.0.1:3350" spellcheck="false">
+  <label for="name">接单名</label>
+  <input id="name" type="text" value="fms-extension" spellcheck="false">
+  <label for="key">接单密钥</label>
+  <input id="key" type="password" autocomplete="off" spellcheck="false">
+  <div class="row"><input id="enabled" type="checkbox"><label for="enabled" style="margin:0;font-weight:400">启用</label></div>
+  <div class="row"><button id="save">保存</button></div>
+  <div id="status" role="status" aria-live="polite"></div>
+</main>
+<script src="options.js"></script>
+</body>
+</html>

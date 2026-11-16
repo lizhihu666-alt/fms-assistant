@@ -5,7 +5,7 @@
 // 里面正在跑的任务也跟着停了。耗时的任务（补基础数据要后台开 FMS 和 EH 两个标签页）改在这里跑，
 // 弹窗关了也不受影响；进度写进 chrome.storage.local，弹窗重新打开（或一直开着）都能看到最新状态。
 
-importScripts("src/baseData.js", "src/baseDataSync.js", "src/fmsSync.js", "src/billGen.js");
+importScripts("src/baseData.js", "src/baseDataSync.js", "src/fmsSync.js", "src/billGen.js", "src/loopWorker.js");
 
 // 点工具栏图标打开侧边栏（侧边栏切换标签页也不会关，不像弹窗一失焦就消失）
 if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
@@ -520,3 +520,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true; // 异步回复
 });
+
+// ---- Loop 接单（可选，默认关闭；在扩展的「选项」页填写）----
+// 目前只会回答「连通测试」，不碰 FMS。以后加的每一种任务都必须在这里登记，没登记的一律什么都不做。
+const loopWorker = LoopWorker.create({
+  getSettings: async () => (await chrome.storage.local.get("loop")).loop,
+  setStatus: (s) => chrome.storage.local.set({ loopStatus: s }),
+  handlers: {
+    "fms.ping": async () => ({ outcome: "done", summary: "收到：FMS 插件在线（v" + chrome.runtime.getManifest().version + "）" }),
+  },
+});
+function ensureLoop() {
+  loopWorker.start(); // 已经在跑就什么都不做；没启用会直接退出
+}
+// 后台脚本空闲会被浏览器回收，定时唤醒一次，没在连着就重新连上
+chrome.alarms.create("loopKeepAlive", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === "loopKeepAlive") ensureLoop();
+});
+chrome.runtime.onStartup.addListener(ensureLoop);
+chrome.runtime.onInstalled.addListener(ensureLoop);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.loop) return;
+  loopWorker.stop(); // 设置变了：让当前这一轮自然结束，下一次唤醒按新设置重新连
+  setTimeout(ensureLoop, 1500);
+});
+ensureLoop();
