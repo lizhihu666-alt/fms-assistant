@@ -26,8 +26,8 @@ const MonthFlow = (() => {
     NO_SETTLEMENT_REQUIRED: "无需结算：不用做什么",
   };
 
-  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存；clean：清洗后保存到下载文件夹；pending：列出该店铺所有品牌「待确认」的账单；basedry：对「待确认」账单查缺价明细和 EH 结算价、做检查，只报告不导入；base：算出补数据草稿并发审批卡片，你点「导入并重新生成账单」后才导入；month：整月流程，按账单状态一步步往前推，遇到要写 FMS 的步骤就发卡片等你批准，最后清洗并保存对账表；generate：这个月还没有账单时，在 FMS 里生成账单（会写 FMS，可在 FMS 里撤销）
-  const MODES = ["dryrun", "cleandry", "clean", "generate", "list", "pending", "basedry", "base", "month"];
+  // dryrun：只读账单列表；cleandry：再下载明细并清洗，但不保存；clean：清洗后保存到下载文件夹；pending：列出该店铺所有品牌「待确认」的账单；basedry：对「待确认」账单查缺价明细和 EH 结算价、做检查，只报告不导入；base：算出补数据草稿并发审批卡片，你点「导入并重新生成账单」后才导入；month：整月流程，按账单状态一步步往前推，遇到要写 FMS 的步骤就发卡片等你批准，最后清洗并保存对账表；monthall：同一店铺这个月所有已有账单的品牌，逐个走整月流程（不会替没账单的品牌生成账单）；generate：这个月还没有账单时，在 FMS 里生成账单（会写 FMS，可在 FMS 里撤销）
+  const MODES = ["dryrun", "cleandry", "clean", "generate", "list", "pending", "basedry", "base", "month", "monthall"];
 
   const norm = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, "");
 
@@ -51,7 +51,8 @@ const MonthFlow = (() => {
     }
     if (!c || typeof c !== "object") return { ok: false, error: "规则里没有参数" };
     if (!MODES.includes(c.mode)) return { ok: false, error: "目前只支持演练模式（mode 要写 " + MODES.join(" 或 ") + "），不会执行写入" };
-    const brand = (brands || []).find((b) => norm(b) === norm(c.brand));
+    // monthall 不指定品牌：品牌从 FMS 账单列表里按店铺+月份找
+    const brand = c.mode === "monthall" ? "*" : (brands || []).find((b) => norm(b) === norm(c.brand));
     if (!brand) return { ok: false, error: "品牌「" + c.brand + "」不在插件认识的清单里" };
     const shop = (shops || []).find((s) => norm(s) === norm(c.shop));
     if (!shop) return { ok: false, error: "店铺「" + c.shop + "」不在插件认识的清单里" };
@@ -79,6 +80,15 @@ const MonthFlow = (() => {
     };
   }
 
+  /** monthall：这个店铺、这个月所有已有账单的品牌（去重，按名字排序）。「无需结算」的账单不算。 */
+  function brandsOfMonth(records, shop, month) {
+    const set = new Set();
+    for (const r of records || []) {
+      if (norm(r.shopCode) === norm(shop) && String(r.accountingMonth) === month && r.settlementStatus !== "NO_SETTLEMENT_REQUIRED" && r.brandName) set.add(r.brandName);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
   /** 清洗只处理「待生成请款单」（基础数据完整）的账单；只要有一张还「待确认」就不清洗，因为数据不全。 */
   function pickCleanable(records, cfg, findBills) {
     const bills = findBills(records, cfg.brand, cfg.shop, cfg.month);
@@ -94,7 +104,7 @@ const MonthFlow = (() => {
     return month > previousMonth(now);
   }
 
-  return { STATUS, NEXT, MODES, isTooEarly, previousMonth, parseConfig, plan, pickCleanable };
+  return { STATUS, NEXT, MODES, isTooEarly, brandsOfMonth, previousMonth, parseConfig, plan, pickCleanable };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = MonthFlow;

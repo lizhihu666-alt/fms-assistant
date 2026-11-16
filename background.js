@@ -676,6 +676,12 @@ async function baseDry(records, cfg) {
   );
 }
 
+async function dropDraft(cfg) {
+  const drafts = (await chrome.storage.local.get("loopBaseDrafts")).loopBaseDrafts || {};
+  delete drafts[draftKey(cfg)];
+  await chrome.storage.local.set({ loopBaseDrafts: drafts });
+}
+
 // 第一步：算草稿，发审批卡片（有疑问就只告诉你，不给「导入」选项）。草稿存在本机，批准后按草稿导入。
 async function baseProposeCard(records, cfg) {
   const d = await baseDraft(records, cfg);
@@ -691,7 +697,9 @@ async function baseProposeCard(records, cfg) {
       ask: [{ title: "补基础数据有疑问：" + label, text: "缺价 " + d.items.length + " 个 SKU，EH 对上 " + d.rows.length + " 个。需要你人工处理：\n" + lines.join("\n"), options: ["知道了，我自己处理"], recommend: 0, key: "fms-base-doubt|" + draftKey(cfg), about: "有疑问的草稿不会自动导入" }],
     };
   }
-  await chrome.storage.local.set({ loopBaseDraft: { key: draftKey(cfg), at: Date.now(), billNos: d.billNos, rows: d.rows } });
+  const drafts = (await chrome.storage.local.get("loopBaseDrafts")).loopBaseDrafts || {};
+  drafts[draftKey(cfg)] = { key: draftKey(cfg), at: Date.now(), billNos: d.billNos, rows: d.rows };
+  await chrome.storage.local.set({ loopBaseDrafts: drafts });
   const sample = d.rows.slice(0, 30).map((r) => r["MM SKU"] + "（" + r["站点"] + "/" + r["店铺"] + "）→ " + r["结算单价"] + " " + r["结算币种"]);
   return {
     summary: "待你批示：补基础数据草稿已备好，等你点「导入并重新生成账单」（" + label + "，" + d.rows.length + " 个 SKU）",
@@ -708,8 +716,8 @@ async function baseProposeCard(records, cfg) {
 
 // 第二步：你批准之后才会走到这里：按草稿导入 → 重新生成账单 → 报告状态。
 async function baseApplied(cfg) {
-  const draft = (await chrome.storage.local.get("loopBaseDraft")).loopBaseDraft;
-  if (!draft || draft.key !== draftKey(cfg)) return "没导入：找不到对应的草稿，请重新触发一次";
+  const draft = ((await chrome.storage.local.get("loopBaseDrafts")).loopBaseDrafts || {})[draftKey(cfg)];
+  if (!draft) return "没导入：找不到对应的草稿，请重新触发一次";
   if (Date.now() - draft.at > 24 * 3600 * 1000) return "没导入：草稿已超过 24 小时，请重新触发一次";
   // 导入前再确认一遍：这些账单现在还是「待确认」
   const records = await withBackgroundTab(
@@ -726,7 +734,7 @@ async function baseApplied(cfg) {
   for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   const imp = await runImport(FMSBaseData.fileName(draft.billNos[0]), btoa(bin));
   if (!imp.ok) return "导入失败：" + String(imp.error).split("\n")[0] + "（没有重新生成账单）";
-  await chrome.storage.local.remove("loopBaseDraft");
+  await dropDraft(cfg);
   await new Promise((r) => setTimeout(r, 15000));
   const status = await withBackgroundTab(
     FMSSync.FMS_BILL_URL,
@@ -797,17 +805,53 @@ async function monthRun(cfg, answers) {
   return { summary: "整月流程 " + label + "：" + log.join("；") };
 }
 
+// 同一店铺这个月所有已有账单的品牌：逐个走整月流程（一个品牌出错不影响别的品牌）。
+// 你的答复是按卡片标题里的品牌对上号的，所以一个品牌点「我自己做」不会影响别的品牌。
+// 不会替没账单的品牌生成账单（生成账单只在单品牌的整月流程里，并且要你批准）。
+async function monthAll(cfg, answers) {
+  const records = await withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records, { quiet: true });
+  const brands = MonthFlow.brandsOfMonth(records, cfg.shop, cfg.month);
+  if (!brands.length) return { summary: "整月流程（全品牌）" + cfg.shop + " / " + cfg.month + "：没有账单" };
+  const lines = [];
+  const asks = [];
+  for (const brand of brands) {
+    const c = Object.assign({}, cfg, { brand, mode: "month" });
+    const mine = answers.filter((a) => String(a.title || "").includes(brand + " / "));
+    if (mine.some((a) => a.chosen === "这个月我自己做")) { lines.push(brand + "：按你的决定，这个月自己做"); continue; }
+    if (mine.some((a) => a.chosen === "先不导入，我自己看" || a.chosen === "知道了，我自己处理")) { await dropDraft(c); lines.push(brand + "：按你的决定，没有导入"); continue; }
+    try {
+      const r = await monthRun(c, mine);
+      lines.push(brand + "：" + r.summary.replace(/^整月流程 [^：]*：/, ""));
+      (r.ask || []).forEach((a) => asks.push(a));
+    } catch (e) {
+      const msg = ((e && e.message) || String(e)).split("\n")[0];
+      if (/登录已过期/.test(msg)) throw e;
+      lines.push(brand + "：没跑成：" + msg);
+    }
+  }
+  return { summary: "整月流程（全品牌）" + cfg.shop + " / " + cfg.month + "，共 " + brands.length + " 个品牌：\n" + lines.join("\n"), ask: asks.length ? asks : undefined };
+}
+
 // 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
 // 品牌、店铺、月份来自 Loop 规则里的参数（JSON）；不认识的品牌或店铺直接拒绝，不猜。
 async function monthDryRun(job) {
   const answers = (job.context && job.context.answers) || [];
-  if (answers.some((a) => a.chosen === "这个月我自己做")) return { outcome: "done", summary: "已按你的决定：这个月不自动处理" };
-  if (answers.some((a) => a.chosen === "先不导入，我自己看" || a.chosen === "知道了，我自己处理")) {
-    await chrome.storage.local.remove("loopBaseDraft");
-    return { outcome: "done", summary: "已按你的决定：没有导入，草稿已丢弃" };
-  }
   const cfg = MonthFlow.parseConfig((job.rule && job.rule.prompt) || "", BillGen.BRANDS, BillGen.SHOPS, new Date());
   if (!cfg.ok) return { outcome: "done", summary: "待你处理：规则里的参数有问题：" + cfg.error };
+  if (cfg.mode === "monthall") {
+    try {
+      return Object.assign({ outcome: "done" }, await monthAll(cfg, answers));
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      if (/登录已过期/.test(msg)) return { outcome: "done", summary: "待你处理：FMS 登录已过期", ask: [{ title: "FMS 登录过期了", text: "整月流程读不到账单。请在浏览器里登录 FMS，登录好再点第一个选项。", options: ["已登录，再试一次", "这个月我自己做"], recommend: 0, key: "fms-login", about: "登录后重新跑整月流程" }] };
+      return { outcome: "failed", error: msg, summary: "没跑成：" + msg.split("\n")[0] };
+    }
+  }
+  if (answers.some((a) => a.chosen === "这个月我自己做")) return { outcome: "done", summary: "已按你的决定：这个月不自动处理" };
+  if (answers.some((a) => a.chosen === "先不导入，我自己看" || a.chosen === "知道了，我自己处理")) {
+    await dropDraft(cfg);
+    return { outcome: "done", summary: "已按你的决定：没有导入，草稿已丢弃" };
+  }
   try {
     if (cfg.mode === "month") return Object.assign({ outcome: "done" }, await monthRun(cfg, answers));
     if (cfg.mode === "generate") return { outcome: "done", summary: "生成账单：" + cfg.brand + " / " + cfg.shop + " / " + cfg.month + " → " + (await generateIfMissing(cfg)) };
@@ -869,6 +913,8 @@ const loopWorker = LoopWorker.create({
     "fms.month.basedry": monthDryRun,
     "fms.month.base": monthDryRun,
     "fms.month.run": monthDryRun,
+    "fms.month.runall": monthDryRun,
+    "rule:FMS·月结全品牌(手动)": monthDryRun,
     "rule:FMS·月结全流程(手动)": monthDryRun,
     "rule:FMS·补基础数据(手动)": monthDryRun,
     "rule:FMS·账单月份清单(手动)": monthDryRun,
