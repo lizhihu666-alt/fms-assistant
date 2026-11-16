@@ -808,27 +808,53 @@ async function monthRun(cfg, answers) {
 // 同一店铺这个月所有已有账单的品牌：逐个走整月流程（一个品牌出错不影响别的品牌）。
 // 你的答复是按卡片标题里的品牌对上号的，所以一个品牌点「我自己做」不会影响别的品牌。
 // 不会替没账单的品牌生成账单（生成账单只在单品牌的整月流程里，并且要你批准）。
+// 分段跑：浏览器会回收跑太久的后台脚本（实测十几分钟的一整轮会被中途回收，Loop 那边就丢了这一轮），
+// 所以每段最多跑 ALL_BUDGET_MS，记下进度，让 Loop 到点叫醒接着跑，全部做完才发汇总。
+let ALL_BUDGET_MS = 150 * 1000;
 async function monthAll(cfg, answers) {
+  const startedAt = Date.now();
+  const pkey = cfg.shop + "|" + cfg.month;
+  const store = async () => (await chrome.storage.local.get("loopAllProgress")).loopAllProgress;
+  let prog = await store();
+  const sameRun = prog && prog.key === pkey && Date.now() - prog.at < 6 * 3600 * 1000;
+  const cont = !!(sameRun && prog.cont); // 上一段没做完、到点叫醒的接力
+  const onlyAnswered = !cont && answers.length > 0; // 你批准卡片唤醒的：只处理有答复的品牌
+  if (!(cont || (onlyAnswered && sameRun))) prog = { key: pkey, at: Date.now(), cont: false, done: {} };
+  prog.cont = false;
+
   const records = await withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records, { quiet: true });
   const brands = MonthFlow.brandsOfMonth(records, cfg.shop, cfg.month);
   if (!brands.length) return { summary: "整月流程（全品牌）" + cfg.shop + " / " + cfg.month + "：没有账单" };
-  const lines = [];
   const asks = [];
   for (const brand of brands) {
     const c = Object.assign({}, cfg, { brand, mode: "month" });
     const mine = answers.filter((a) => String(a.title || "").includes(brand + " / "));
-    if (mine.some((a) => a.chosen === "这个月我自己做")) { lines.push(brand + "：按你的决定，这个月自己做"); continue; }
-    if (mine.some((a) => a.chosen === "先不导入，我自己看" || a.chosen === "知道了，我自己处理")) { await dropDraft(c); lines.push(brand + "：按你的决定，没有导入"); continue; }
+    if (onlyAnswered && !mine.length) continue;
+    if (prog.done[brand] && !mine.length) continue; // 接力时已经做过的跳过
+    if (Date.now() - startedAt > ALL_BUDGET_MS) {
+      prog.cont = true;
+      await chrome.storage.local.set({ loopAllProgress: prog });
+      return {
+        summary: "整月流程（全品牌）进行中：已处理 " + Object.keys(prog.done).length + "/" + brands.length + " 个品牌，稍后自动接着做",
+        ask: asks.length ? asks : undefined,
+        later: [{ key: "fms-runall|" + pkey, at: new Date(Date.now() + 20000).toISOString(), about: "接着处理剩下的品牌" }],
+      };
+    }
+    if (mine.some((a) => a.chosen === "这个月我自己做")) { prog.done[brand] = "按你的决定，这个月自己做"; continue; }
+    if (mine.some((a) => a.chosen === "先不导入，我自己看" || a.chosen === "知道了，我自己处理")) { await dropDraft(c); prog.done[brand] = "按你的决定，没有导入"; continue; }
     try {
       const r = await monthRun(c, mine);
-      lines.push(brand + "：" + r.summary.replace(/^整月流程 [^：]*：/, ""));
-      (r.ask || []).forEach((a) => asks.push(a));
+      prog.done[brand] = r.summary.replace(/^整月流程 [^：]*：/, "");
+      (r.ask || []).forEach((x) => asks.push(x));
     } catch (e) {
       const msg = ((e && e.message) || String(e)).split("\n")[0];
       if (/登录已过期/.test(msg)) throw e;
-      lines.push(brand + "：没跑成：" + msg);
+      prog.done[brand] = "没跑成：" + msg;
     }
+    await chrome.storage.local.set({ loopAllProgress: prog });
   }
+  await chrome.storage.local.set({ loopAllProgress: prog });
+  const lines = brands.filter((x) => prog.done[x]).map((x) => x + "：" + prog.done[x]);
   return { summary: "整月流程（全品牌）" + cfg.shop + " / " + cfg.month + "，共 " + brands.length + " 个品牌：\n" + lines.join("\n"), ask: asks.length ? asks : undefined };
 }
 
