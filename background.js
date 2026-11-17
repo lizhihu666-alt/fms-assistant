@@ -848,7 +848,8 @@ async function monthAll(cfg, answers) {
       (r.ask || []).forEach((x) => asks.push(x));
     } catch (e) {
       const msg = ((e && e.message) || String(e)).split("\n")[0];
-      if (/登录已过期/.test(msg)) throw e;
+      // 页面没返回结果多半是登录过期后被跳走了：别把剩下的品牌都标成没跑成，直接按登录过期处理，发卡片
+      if (/登录已过期|没有拿到页面的执行结果/.test(msg)) throw new Error("FMS 登录已过期（" + msg.split("\n")[0] + "）");
       prog.done[brand] = "没跑成：" + msg;
     }
     await chrome.storage.local.set({ loopAllProgress: prog });
@@ -869,7 +870,7 @@ async function monthDryRun(job) {
       return Object.assign({ outcome: "done" }, await monthAll(cfg, answers));
     } catch (e) {
       const msg = (e && e.message) || String(e);
-      if (/登录已过期/.test(msg)) return { outcome: "done", summary: "待你处理：FMS 登录已过期", ask: [{ title: "FMS 登录过期了", text: "整月流程读不到账单。请在浏览器里登录 FMS，登录好再点第一个选项。", options: ["已登录，再试一次", "这个月我自己做"], recommend: 0, key: "fms-login", about: "登录后重新跑整月流程" }] };
+      if (/登录已过期|没有拿到页面的执行结果/.test(msg)) return { outcome: "done", summary: "待你处理：FMS 登录已过期", ask: [{ title: "FMS 登录过期了", text: "整月流程读不到账单。请在浏览器里登录 FMS，登录好再点第一个选项。", options: ["已登录，再试一次", "这个月我自己做"], recommend: 0, key: "fms-login", about: "登录后重新跑整月流程" }] };
       return { outcome: "failed", error: msg, summary: "没跑成：" + msg.split("\n")[0] };
     }
   }
