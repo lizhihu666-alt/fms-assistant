@@ -941,6 +941,8 @@ const loopWorker = LoopWorker.create({
     "fms.month.base": monthDryRun,
     "fms.month.run": monthDryRun,
     "fms.month.runall": monthDryRun,
+    "fms.month.bagsmart": monthDryRun,
+    "rule:FMS·月结BAGSMART(手动)": monthDryRun,
     "rule:FMS·月结全品牌(手动)": monthDryRun,
     "rule:FMS·月结全流程(手动)": monthDryRun,
     "rule:FMS·补基础数据(手动)": monthDryRun,
