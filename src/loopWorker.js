@@ -87,6 +87,9 @@ const LoopWorker = (() => {
           }
         }
         if (!result || !result.outcome) result = { outcome: "failed", error: "处理函数没有返回结果", summary: "没跑成：处理函数没有返回结果" };
+        // 中台限制 summary / error 最多 500 字，超了整份回执被拒收，这一轮会变成「不确定」；截短保底
+        const clip = (t) => (typeof t === "string" && t.length > 480 ? t.slice(0, 480) + "…" : t);
+        result = Object.assign({}, result, { summary: clip(result.summary), error: clip(result.error) });
         await http(s, "POST", "/v1/runs/" + job.run + "/result", job.token, result);
       } finally {
         clearInterval(beat);

@@ -856,7 +856,17 @@ async function monthAll(cfg, answers) {
   }
   await chrome.storage.local.set({ loopAllProgress: prog });
   const lines = brands.filter((x) => prog.done[x]).map((x) => x + "：" + prog.done[x]);
-  return { summary: "整月流程（全品牌）" + cfg.shop + " / " + cfg.month + "，共 " + brands.length + " 个品牌：\n" + lines.join("\n"), ask: asks.length ? asks : undefined };
+  // 中台限制回执里的一句话最多 500 字，22 个品牌的明细放不下会被整份拒收（这一轮就变成「不确定」）。
+  // 一句话只写数量，完整明细放通知卡片（上限 4000 字）。
+  const total = brands.length;
+  const saved = brands.filter((x) => /已保存/.test(prog.done[x] || "")).length;
+  const failed = brands.filter((x) => /^没跑成/.test(prog.done[x] || "")).length;
+  const detail = lines.join("\n");
+  return {
+    summary: "整月流程（全品牌）" + cfg.shop + " / " + cfg.month + "，共 " + total + " 个品牌：" + saved + " 个已出对账表，" + failed + " 个没跑成，其余无需处理或按你的决定跳过；明细见通知卡片",
+    notice: [{ title: "全品牌整月流程明细 " + cfg.shop + " / " + cfg.month, text: detail.length > 3900 ? detail.slice(0, 3900) + "…" : detail, key: "fms-runall-detail|" + pkey, fyi: true }],
+    ask: asks.length ? asks : undefined,
+  };
 }
 
 // 月结演练：只读。读一遍账单列表，说出「如果真做，打算做什么」，不点任何会改 FMS 数据的按钮。
