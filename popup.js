@@ -1279,6 +1279,35 @@
     matchImportStatus.className = "status" + (kind ? " " + kind : "");
   }
 
+  // 补不上的完整清单。旧版本跑出来的结果没有这份清单：用「缺价 − 能补」推出来，原因从旧的那段文字里认
+  function unresolvedListOf(job) {
+    if (job.unresolvedList) return job.unresolvedList;
+    if (job.stage !== "matched" || !job.fms || !job.fms.missing) return [];
+    const reasonOf = {};
+    const reasons = [];
+    let cur = "";
+    for (const line of String(job.unresolved || "").split("\n")) {
+      const m = line.match(/^(\S.*?)（\d+ 个）$/);
+      if (m) {
+        cur = m[1];
+        reasons.push(cur);
+        continue;
+      }
+      const sku = line.trim().split(/\s+/)[0];
+      if (cur && sku && !/^…/.test(sku)) reasonOf[sku] = cur;
+    }
+    const done = new Set((job.rows || []).map((r) => [r["MM SKU"], r["店铺"], r["站点"]].join("|")));
+    const seen = new Set();
+    const list = [];
+    for (const r of job.fms.missing) {
+      const k = [r.sku, r.shopCode, r.siteCode].join("|");
+      if (seen.has(k) || done.has(k)) continue;
+      seen.add(k);
+      list.push({ sku: r.sku, shop: r.shopCode, site: r.siteCode, reason: reasonOf[r.sku] || (reasons.length === 1 ? reasons[0] : "补不上") });
+    }
+    return list;
+  }
+
   // 下面的列表：按当前视图列出 SKU。组头写一次（店铺 / 站点，或补不上的原因），行里只放 SKU（能补的再带上价格）
   function renderMatchList(job) {
     const groups = new Map();
@@ -1305,7 +1334,7 @@
       // 原因缩成几个字放在行右边（和能补那边的价格同一个位置），完整原因放在鼠标悬停提示里
       const short = (r) =>
         /没有成本/.test(r) ? "EH 无成本" : /搜不到/.test(r) ? "EH 搜不到" : /币种/.test(r) ? "币种不一致" : /Channel|渠道/.test(r) ? "无 EH 渠道" : /查询失败|失败/.test(r) ? "EH 查询失败" : r;
-      for (const u of job.unresolvedList || []) {
+      for (const u of unresolvedListOf(job)) {
         add(
           where(u.shop, u.site),
           '<div class="missing-sku"><span>' + escHtml(u.sku) + '</span><span class="sku-reason" title="' + escHtml(u.reason) + '">' + escHtml(short(u.reason)) + "</span></div>",
@@ -1382,7 +1411,7 @@
     const extra = [];
     if (skipped.length) extra.push("没有对应 EH 渠道、已跳过：" + skipped.map(([s, n]) => s + "（" + n + " 个）").join("、"));
     if (job.warnings && job.warnings.length) extra.push("检查提示：" + job.warnings.join("；"));
-    const text = [job.unresolvedList ? "" : job.unresolved, ...extra].filter(Boolean).join("\n");
+    const text = [unresolvedListOf(job).length ? "" : job.unresolved, ...extra].filter(Boolean).join("\n");
     matchUnresolved.hidden = !text;
     matchUnresolved.textContent = text;
 
