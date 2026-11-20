@@ -246,13 +246,18 @@
           <label class="field-label">店铺</label>
           <div id="matchShops" class="brand-checks"></div>
         </div>
-        <button id="matchBtn" type="button" class="btn btn-primary btn-full" disabled>① 查询 FMS 缺失 SKU</button>
-        <button id="matchResolveBtn" type="button" class="btn btn-primary btn-full" hidden>② 去 EH 匹配</button>
+        <div class="match-actions">
+          <button id="matchBtn" type="button" class="btn btn-primary btn-full" disabled>① 查询 FMS 缺失 SKU</button>
+          <button id="matchResolveBtn" type="button" class="btn btn-primary btn-full" hidden>② 去 EH 匹配</button>
+        </div>
         <div id="matchStatus" class="status" hidden></div>
         <div id="matchStats" class="stat-grid match-stats" hidden></div>
         <details id="matchMissing" class="match-missing" hidden>
-          <summary id="matchMissingSummary">FMS 缺失 SKU</summary>
-          <pre id="matchMissingList" class="match-unresolved"></pre>
+          <summary>
+            <span id="matchMissingSummary">FMS 缺失 SKU</span>
+            <button id="matchMissingCopy" type="button" class="missing-copy">复制全部</button>
+          </summary>
+          <div id="matchMissingList" class="missing-list"></div>
         </details>
         <pre id="matchUnresolved" class="match-unresolved" hidden></pre>
         <a id="matchDownload" class="file-chip file-chip-link" hidden download>

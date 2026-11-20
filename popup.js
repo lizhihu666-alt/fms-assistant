@@ -1212,6 +1212,8 @@
   const matchMissing = document.getElementById("matchMissing");
   const matchMissingSummary = document.getElementById("matchMissingSummary");
   const matchMissingList = document.getElementById("matchMissingList");
+  const matchMissingCopy = document.getElementById("matchMissingCopy");
+  let matchMissingSkus = [];
   let matchMissingKey = "";
   const matchUnresolved = document.getElementById("matchUnresolved");
   const matchDownload = document.getElementById("matchDownload");
@@ -1241,10 +1243,14 @@
   const selectedMatchShops = () => [...matchShops.querySelectorAll("input:checked")].map((i) => i.value);
   function updateMatchBtn() {
     matchBtn.disabled = matchRunning || !matchBrand.value || !selectedMatchShops().length;
-    matchBtn.textContent = matchRunning ? "后台处理中…（可以去看别的标签页）" : "① 查询 FMS 缺失 SKU";
     // 第二步用的是第一步查出来的品牌，和下拉框当前选的无关
     const stage = lastMatchJob && lastMatchJob.stage;
     const queried = lastMatchJob && lastMatchJob.fms;
+    // 第一步做完后降成次要按钮（只在想重查时用），主按钮留给第二步
+    const done = !!(stage && queried);
+    matchBtn.classList.toggle("btn-primary", !done);
+    matchBtn.classList.toggle("btn-outline", done);
+    matchBtn.textContent = matchRunning ? "后台处理中…（可以去看别的标签页）" : done ? "重新查询 FMS 缺失 SKU" : "① 查询 FMS 缺失 SKU";
     matchResolveBtn.hidden = !stage || !queried;
     matchResolveBtn.disabled = matchRunning;
     matchResolveBtn.textContent = "② 去 EH 匹配" + (queried ? "（" + queried.brand + "）" : "");
@@ -1278,21 +1284,31 @@
         '<div class="stat-tile ok"><span class="stat-num">' + (st.matched == null ? "–" : st.matched) + '</span><span class="stat-label">EH 能补</span></div>' +
         '<div class="stat-tile ' + (st.unresolved ? "overdue" : "") + '"><span class="stat-num">' + (st.unresolved == null ? "–" : st.unresolved) + '</span><span class="stat-label">补不上</span></div>';
     }
-    // 第一步查出来的缺失 SKU 全部列出来（按 站点+店铺+SKU 去重）
+    // 第一步查出来的缺失 SKU：按「店铺 / 站点」分组，组头写一次，下面只列 SKU（按 站点+店铺+SKU 去重）
     const miss = job.fms && job.fms.missing;
     matchMissing.hidden = !(miss && miss.length);
     if (!matchMissing.hidden) {
+      const groups = new Map();
       const seen = new Set();
-      const lines = [];
       for (const r of miss) {
         const k = [r.siteCode, r.shopCode, r.sku].join("|");
         if (seen.has(k)) continue;
         seen.add(k);
-        lines.push([r.sku, (r.shopCode || "") + "/" + (r.siteCode || ""), [r.style, r.color, r.size].filter(Boolean).join(" ")].join("  "));
+        const g = (r.shopCode || "") + " / " + (r.siteCode || "");
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push(r.sku);
       }
-      matchMissingSummary.textContent = "FMS 缺失 SKU（" + lines.length + " 个）";
-      matchMissingList.textContent = lines.join("\n");
-      const key = job.fms.brand + ":" + lines.length + ":" + miss.length;
+      matchMissingSkus = [...new Set([...groups.values()].flat())];
+      const total = seen.size;
+      matchMissingSummary.textContent = "FMS 缺失 SKU · " + total + " 个";
+      matchMissingList.innerHTML = [...groups]
+        .map(
+          ([g, skus]) =>
+            '<div class="missing-group-head"><span>' + escHtml(g) + "</span><span>" + skus.length + "</span></div>" +
+            skus.map((s) => '<div class="missing-sku">' + escHtml(s) + "</div>").join("")
+        )
+        .join("");
+      const key = job.fms.brand + ":" + total + ":" + miss.length;
       if (key !== matchMissingKey) {
         matchMissingKey = key;
         matchMissing.open = true; // 新查出来的先展开，之后用户折叠了就不再自动展开
@@ -1344,6 +1360,18 @@
       matchStatus.className = "status error";
       matchStatus.textContent = (res && res.reason) || "后台服务没有响应。请在浏览器的扩展管理页刷新本插件，再重试。";
     }
+  });
+
+  matchMissingCopy.addEventListener("click", async (e) => {
+    e.preventDefault(); // 按钮在 summary 里，别触发折叠
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(matchMissingSkus.join("\n"));
+      matchMissingCopy.textContent = "已复制 " + matchMissingSkus.length + " 个";
+    } catch (err) {
+      matchMissingCopy.textContent = "复制失败";
+    }
+    setTimeout(() => (matchMissingCopy.textContent = "复制全部"), 1800);
   });
 
   matchResolveBtn.addEventListener("click", async () => {
