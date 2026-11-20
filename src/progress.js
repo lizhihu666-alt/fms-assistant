@@ -11,22 +11,16 @@
 //  - 「还剩几个付款周四」= 今天之后（严格晚于今天，也晚于可请款日）到最后一个周四之间的周四数。
 
 const FMSProgress = (() => {
+  const CFG = typeof FMSConfig !== "undefined" ? FMSConfig : require("./config.js"); // 业务配置都在 src/config.js
   const DEFAULTS = {
-    minMonth: "2026-06", // 只关注这个结算月及以后的账单，更早的是历史遗留
+    minMonth: CFG.MIN_MONTH, // 只关注这个结算月及以后的账单
     stayWarnDays: 3, // 审批节点/我方环节停留超过这么多天标橙
     paymentStaleDays: 7, // 审批通过后超过这么多天还没付款标橙（财务每周付一次）
     payWeekday: 4, // 付款日：周四
     availableDay: 10, // 次月几号起可请款
-    // 看板只覆盖这几位操作人负责的账单（FMS 里能看到所有人的，但这里只关心团队自己的）
-    operators: ["Leo.Hu", "Estela.Liu", "Zita.Ye", "Remy.He", "Diven.Xu"],
-    // 店铺筛选项（只是筛选下拉里列出的选项；「全部」不限店铺）
-    shops: ["JUSTFAB", "Justfab EU"],
-    // 手动指定「同一个 vendor」：这些店铺下的这几个品牌，在「按 Vendor」视图里并成一行
-    // （FMS 的品牌商公司字段没填成同一个时，靠这里补）。品牌名/店铺名不区分大小写和空格。
-    vendorGroups: [
-      { shop: "Justfab EU", brands: ["Imily Bela", "Runcati"], vendor: "vendor:Justfab EU:Imily Bela+Runcati" },
-      { shop: "JUSTFAB", brands: ["Runcati", "Haloumoning", "Cicy Bell", "Saodimallsu", "YOUSIFY", "Wenrine", "Aoysky", "Imily Bela"], vendor: "vendor:JUSTFAB:Runcati+Haloumoning+Cicy Bell+Saodimallsu+YOUSIFY+Wenrine+Aoysky+Imily Bela" },
-    ],
+    operators: CFG.OPERATORS, // 看板只覆盖这几位操作人负责的账单
+    shops: CFG.SHOPS, // 店铺筛选项
+    vendorGroups: CFG.VENDOR_GROUPS, // 手动指定「同一个 Vendor」
   };
 
   // "Leo Hu" / "leo.hu" / "Leo.Hu" 都算同一个人
@@ -420,7 +414,7 @@ const FMSProgress = (() => {
 
   /** 费控单详情页链接（审批人点开就能直接处理） */
   function docUrl(code) {
-    return `https://fms-jf.wangoon.cn/expense-control/center/edit-account?step=other&code=${encodeURIComponent(code)}&op=1&origin=center`;
+    return `${CFG.FMS_ORIGIN}/expense-control/center/edit-account?step=other&code=${encodeURIComponent(code)}&op=1&origin=center`;
   }
 
   /** 催办话术（只生成文字，由用户自己复制发送） */

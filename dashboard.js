@@ -263,13 +263,8 @@
     });
   }
 
-  async function runInTab(tabId, func, args, label) {
-    const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args, world: "MAIN" });
-    const r = res && res.result;
-    if (!r) throw new Error(`${label}：没有拿到FMS页面的执行结果`);
-    if (!r.ok) throw new Error(`${label}失败：${r.error}`);
-    return r;
-  }
+  // 在网页里执行注入函数（规矩见 src/pageRun.js 开头）
+  const runInTab = PageRun.run;
 
   function setSyncing(on, text) {
     state.syncing = on;
@@ -285,10 +280,10 @@
     let tab = null;
     let keepTab = false;
     try {
-      tab = await chrome.tabs.create({ url: FMSSync.FMS_BILL_URL, active: false });
+      tab = await chrome.tabs.create({ url: FMSConfig.FMS_BILL_URL, active: false });
       await waitTabComplete(tab.id);
 
-      const loggedIn = async () => (await chrome.tabs.get(tab.id)).url.startsWith(FMSSync.FMS_ORIGIN);
+      const loggedIn = async () => (await chrome.tabs.get(tab.id)).url.startsWith(FMSConfig.FMS_ORIGIN);
       const needLogin = async () => {
         keepTab = true;
         await chrome.tabs.update(tab.id, { active: true });

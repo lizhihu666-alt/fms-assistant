@@ -7,7 +7,8 @@
 // chrome.scripting.executeScript 外面，否则拿不到任何诊断信息。
 
 const FMSAutomation = (() => {
-  const FMS_URL_PATTERN = "https://fms-jf.wangoon.cn/brand-payment/brand-bill";
+  const CFG = typeof FMSConfig !== "undefined" ? FMSConfig : require("./config.js"); // 业务配置都在 src/config.js
+  const FMS_URL_PATTERN = CFG.FMS_BILL_URL;
 
   function isOnFmsBillPage(url) {
     return !!url && url.startsWith(FMS_URL_PATTERN);

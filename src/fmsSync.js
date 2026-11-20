@@ -9,8 +9,6 @@
 // 所以必须自包含（不能引用这里的外部变量），并且自己 try/catch、总是返回普通对象。
 
 const FMSSync = (() => {
-  const FMS_ORIGIN = "https://fms-jf.wangoon.cn";
-  const FMS_BILL_URL = FMS_ORIGIN + "/brand-payment/brand-bill";
 
   /**
    * 在品牌商账单页，把每页条数切到1000并截取列表接口返回，拿到全部账单。
@@ -264,5 +262,5 @@ const FMSSync = (() => {
     }
   }
 
-  return { FMS_ORIGIN, FMS_BILL_URL, fetchBillList, fetchApprovalChains };
+  return { fetchBillList, fetchApprovalChains };
 })();

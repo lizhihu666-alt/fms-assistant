@@ -495,23 +495,8 @@
     });
   }
 
-  async function runStep(tabId, func, args, label) {
-    const [injectionResult] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func,
-      args,
-      world: "MAIN", // 必须用主世界，才能跟FMS页面自己的代码共用同一个 Node.prototype
-    });
-    const automationResult = injectionResult && injectionResult.result;
-    if (!automationResult) {
-      throw new Error(`${label}：插件没有拿到FMS页面的执行结果（可能是页面刷新打断了执行）`);
-    }
-    if (!automationResult.ok) {
-      const trace = (automationResult.log || []).join(" → ");
-      throw new Error(`${label}失败：${automationResult.error}` + (trace ? `\n执行轨迹：${trace}` : ""));
-    }
-    return automationResult;
-  }
+  // 在网页里执行注入函数（规矩见 src/pageRun.js 开头）
+  const runStep = PageRun.run;
 
   /**
    * 确保当前有一个标签页停在 FMS 品牌商账单页，并且是刚硬刷新过的、干净的状态
@@ -1199,7 +1184,7 @@
 
   // 后台每更新一次进度，侧边栏（如果开着）就跟着刷新
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes.baseJob) renderBaseJob(changes.baseJob.newValue);
+    if (area === "local" && changes.billFillJob) renderBaseJob(changes.billFillJob.newValue);
   });
 
   // ---- 基础数据 · 全量匹配：选品牌和店铺，把 FMS 基础数据里缺结算价的行全部到 EH 找成本，生成导入文件 ----
@@ -1459,7 +1444,7 @@
     updateMatchBtn();
     let res;
     try {
-      res = await chrome.runtime.sendMessage({ type: "match:start", brand, shops, auto: matchAuto.checked });
+      res = await chrome.runtime.sendMessage({ type: "match:query", brand, shops, auto: matchAuto.checked });
     } catch (e) {
       res = null;
     }
@@ -1664,7 +1649,7 @@
     renderProgressCounts(r.fmsSnapshot, r.dashOperator, r.dashShop);
     if (r.panelTab === "progress") showTab("progress");
   });
-  chrome.storage.local.get(["invoiceStatus", "cleanStatus", "regenStatus", "billNo", "flow", "baseJob", "genJob", "genForm", "regenJob", "fmsSnapshot", "vendorBills"], (r) => {
+  chrome.storage.local.get(["invoiceStatus", "cleanStatus", "regenStatus", "billNo", "flow", "billFillJob", "genJob", "genForm", "regenJob", "fmsSnapshot", "vendorBills"], (r) => {
     if (r.invoiceStatus && r.invoiceStatus.text) setInvoiceStatus(r.invoiceStatus.text, r.invoiceStatus.kind);
     if (r.cleanStatus && r.cleanStatus.text) setCleanStatus(r.cleanStatus.text, r.cleanStatus.kind);
     if (r.regenStatus && r.regenStatus.text) setRegenStatus(r.regenStatus.text, r.regenStatus.kind);
@@ -1690,7 +1675,7 @@
       genAppliedKey = (r.genJob.startedAt || 0) + ":" + (r.genJob.bills || []).map((x) => x.billNo).join(",");
       renderGenJob(r.genJob);
     }
-    renderBaseJob(r.baseJob);
+    renderBaseJob(r.billFillJob);
     if (currentBills().length && !flowView().known) setTimeout(checkStatus, 0); // 打开时有编号但没读过状态 → 自动读
     if (r.regenJob) {
       regenAppliedKey = (r.regenJob.startedAt || 0) + ":" + JSON.stringify(r.regenJob.statuses || r.regenJob.status || "");

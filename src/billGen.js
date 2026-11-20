@@ -6,12 +6,9 @@
 // 注入函数会被整体注入页面（MAIN world），所以必须自包含、自己 try/catch、总是返回普通对象。
 
 const BillGen = (() => {
-  const BRANDS = [
-    "TIJN", "Pretty Garden", "Magnlens", "Attraco", "BAGSMART", "ECOSUSI", "V for City", "Attraco-B",
-    "HASHMERE", "FINEAST", "Camel Crown", "Dorina", "TouchStone", "UBRAS", "PUYONG", "SEQWL",
-    "Malow London", "Where's That From", "Imily Bela", "Lahome", "SOJOS", "CAMEL", "CHARMO",
-  ];
-  const SHOPS = ["JUSTFAB", "Justfab EU"];
+  const CFG = typeof FMSConfig !== "undefined" ? FMSConfig : require("./config.js"); // 业务配置都在 src/config.js
+  const BRANDS = CFG.BRANDS;
+  const SHOPS = CFG.SHOPS;
 
   const norm = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, "");
 

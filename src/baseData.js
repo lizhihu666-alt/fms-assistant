@@ -12,8 +12,8 @@
 //   3. toWorkbook：按 FMS「第三方基础配置导入」模板的格式生成 xlsx。
 
 const FMSBaseData = (() => {
-  // FMS 店铺 -> EH Channel。shoedazzle 等不在这里的店铺不处理（会进未处理清单）。
-  const SHOP_TO_CHANNEL = { justfab: "justfab-us", justfabeu: "justfab-eu" };
+  const CFG = typeof FMSConfig !== "undefined" ? FMSConfig : require("./config.js"); // 业务配置都在 src/config.js
+  const SHOP_TO_CHANNEL = CFG.SHOP_TO_CHANNEL; // FMS 店铺 -> EH Channel
 
   // FMS 模板（「下载模板」拿到的文件）：sheet 名「数据页」，第一行是这 12 个表头，冻结首行，列宽 19.5
   const SHEET_NAME = "数据页";
@@ -21,17 +21,7 @@ const FMSBaseData = (() => {
 
   const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-  // FMS 品牌名 → EH 里对应的商户名（精确匹配）。没列在这里的品牌，按「EH 商户名包含品牌名」处理
-  // （如 TIJN 会匹配 TIJN-consignment 和 TIJN-drop ship，Pretty Garden 会匹配 Pretty Garden US）
-  const EH_MERCHANTS = {
-    attraco: ["Attraco-Drop Ship", "Attraco"],
-    vforcity: ["Attraco-Drop Ship", "Attraco"],
-    attracob: ["Attraco-Drop Ship", "Attraco"],
-    charmo: ["Attraco-Drop Ship", "Attraco"],
-    ecosusi: ["BAGSMART"],
-    camel: ["Camel"],
-    camelcrown: ["Camel Crown"],
-  };
+  const EH_MERCHANTS = CFG.EH_MERCHANTS; // FMS 品牌 -> EH Merchant
 
   /** 返回 EH 商户名的精确列表；没有特殊对应时返回 []（调用方按名字包含品牌名处理） */
   function ehMerchantsOf(brand) {

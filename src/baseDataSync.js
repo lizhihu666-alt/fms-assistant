@@ -6,17 +6,12 @@
 // 每个注入函数会被整体注入页面（MAIN world），所以必须自包含、自己 try/catch、总是返回普通对象。
 
 const BaseDataSync = (() => {
-  const FMS_ORIGIN = "https://fms-jf.wangoon.cn";
-  const FMS_BILL_URL = FMS_ORIGIN + "/brand-payment/brand-bill";
-  const FMS_BASEDATA_URL = FMS_ORIGIN + "/brand-payment/brand-data";
-  const EH_ORIGIN = "https://admin.engagehub.tsostech.com";
-  const EH_PRICING_URL = EH_ORIGIN + "/pricing";
 
   /**
    * FMS「账单明细」页：按账单编号筛选，读出全部明细，返回「结算金额为空」的行。
    * 返回 { ok, total, missing: [...], log }。
    */
-  async function fetchMissingPriceRows(billNo) {
+  async function fetchBillMissingRows(billNo) {
     const log = [];
     const step = (m) => log.push(m);
     try {
@@ -419,7 +414,7 @@ const BaseDataSync = (() => {
    * brand：品牌名（和页面「品牌商」下拉里的写法一致）；shops：要看的店铺（空 = 该品牌下所有店铺）。
    * 返回 { ok, total, missing: [...], byShop: { 店铺: { total, missing } }, log }。
    */
-  async function fetchFmsBaseDataMissing(brand, shops) {
+  async function fetchBaseDataMissingRows(brand, shops) {
     const log = [];
     const step = (m) => log.push(m);
     try {
@@ -913,5 +908,5 @@ const BaseDataSync = (() => {
     }
   }
 
-  return { FMS_ORIGIN, FMS_BILL_URL, FMS_BASEDATA_URL, EH_ORIGIN, EH_PRICING_URL, fetchMissingPriceRows, fetchEhCosts, importBaseDataFile, fetchFmsBaseDataMissing, fetchEhExportLinks };
+  return { fetchBillMissingRows, fetchEhCosts, importBaseDataFile, fetchBaseDataMissingRows, fetchEhExportLinks };
 })();

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>假 FMS（本地测试用）</title>
+<link rel="stylesheet" href="/libs/element-plus.css" />
+<link rel="stylesheet" href="/libs/vxe-table.css" />
+<style>
+  body { margin: 0; font-family: "Microsoft YaHei", sans-serif; background: #f5f7fa; }
+  .banner { background: #fff3cd; color: #664d03; padding: 4px 12px; font-size: 12px; }
+  .wrap { padding: 12px 20px; }
+  .link { color: #409eff; cursor: pointer; margin-right: 12px; }
+  .toolbar { margin: 10px 0; }
+</style>
+</head>
+<body>
+<div class="banner">⚠ 这是本地模拟的假 FMS，只用来测试插件逻辑，不连接任何真实系统。</div>
+<div style="padding:6px 20px;background:#fff"><button id="runAll" style="padding:4px 14px;cursor:pointer">运行全部测试</button> <span id="runInfo" style="font-size:12px;color:#666"></span><pre id="runOut" style="font-size:12px;margin:6px 0 0;white-space:pre-wrap"></pre></div>
+<div id="app"></div>
+
+<script src="/libs/vue.js"></script>
+<script src="/libs/element-plus.js"></script>
+<script src="/libs/zh-cn.js"></script>
+<script src="/libs/xe-utils.js"></script>
+<script src="/libs/vxe-table.js"></script>
+<script src="/ext/libs/xlsx.full.min.js"></script>
+<script src="/ext/libs/exceljs.min.js"></script>
+
+<!-- 被测的插件模块（真实源码，不是拷贝） -->
+<script src="/ext/src/config.js"></script>
+<script src="/ext/src/pageRun.js"></script>
+<script src="/ext/src/fmsSync.js"></script>
+<script src="/ext/src/billGen.js"></script>
+<script src="/ext/src/baseData.js"></script>
+<script src="/ext/src/baseDataSync.js"></script>
+<script src="/ext/src/fmsAutomation.js"></script>
+
+<script src="/fake/app.js"></script>
+<script src="/fake/tests.js"></script>
+<script>
+document.getElementById("runAll").onclick = async () => {
+  const info = document.getElementById("runInfo"), out = document.getElementById("runOut");
+  info.textContent = "运行中…（约 3 分钟，别切走页面）"; out.textContent = "";
+  const res = await __runTests();
+  const bad = res.filter(r => !r.ok);
+  info.textContent = bad.length ? "失败 " + bad.length + " / " + res.length : "全部通过 " + res.length + " / " + res.length;
+  out.textContent = res.map(r => (r.ok ? "✓ " : "✗ ") + r.name + (r.ok ? "" : " —— " + r.error)).join("\n");
+};
+</script>
+</body>
+</html>

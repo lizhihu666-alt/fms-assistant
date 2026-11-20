@@ -6,6 +6,8 @@
 // 弹窗关了也不受影响；进度写进 chrome.storage.local，弹窗重新打开（或一直开着）都能看到最新状态。
 
 // 清洗对账表要用到的库；万一加载失败，只让清洗不能用，不影响别的功能
+importScripts("src/config.js", "src/pageRun.js");
+
 let CLEAN_READY = true;
 try {
   importScripts("libs/xlsx.full.min.js", "libs/exceljs.min.js", "src/cleaner.js", "src/fmsAutomation.js");
@@ -20,26 +22,22 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((e) => console.error(e));
 }
 
-const JOB_KEY = "baseJob";
+const BILL_FILL_KEY = "billFillJob"; // 请款第 3 步「补充数据」的任务状态（从一张账单出发补结算价）
+// v0.10.34 起由 baseJob 改名：把旧的挪过来（只会做一次）
+chrome.storage.local.get("baseJob").then((r) => {
+  if (r && r.baseJob) chrome.storage.local.set({ billFillJob: r.baseJob }).then(() => chrome.storage.local.remove("baseJob"));
+});
 const STALE_JOB_MS = 10 * 60 * 1000; // 超过10分钟还显示"运行中"，认为是上次异常中断留下的，允许重新开始
 
 async function setJob(patch) {
-  const cur = (await chrome.storage.local.get(JOB_KEY))[JOB_KEY] || {};
+  const cur = (await chrome.storage.local.get(BILL_FILL_KEY))[BILL_FILL_KEY] || {};
   const next = Object.assign({}, cur, patch);
-  await chrome.storage.local.set({ [JOB_KEY]: next });
+  await chrome.storage.local.set({ [BILL_FILL_KEY]: next });
   return next;
 }
 
-async function runStep(tabId, func, args, label) {
-  const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args, world: "MAIN" });
-  const r = res && res.result;
-  if (!r) throw new Error(`${label}：没有拿到页面的执行结果（可能是页面被刷新或关闭了）`);
-  if (!r.ok) {
-    const trace = (r.log || []).join(" → ");
-    throw new Error(`${label}失败：${r.error}` + (trace ? `\n执行轨迹：${trace}` : ""));
-  }
-  return r;
-}
+// 在网页里执行注入函数（规矩见 src/pageRun.js 开头）
+const runStep = PageRun.run;
 
 function waitTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
@@ -66,7 +64,7 @@ function waitTabComplete(tabId, timeoutMs = 30000) {
 // 后台标签页里浏览器会暂停动画帧和限制定时器，Element Plus 的下拉、日期面板、弹窗会卡在半开状态，
 // 自动选择就会时灵时不灵（有的品牌选得上、有的选不上）。跑完自动切回用户原来看的标签页。
 const TEMP_TABS = new Set();
-async function withBackgroundTab(url, name, fn, opts) {
+async function withTab(url, name, fn, opts) {
   const foreground = !!(opts && opts.foreground);
   const quiet = !!(opts && opts.quiet); // 自动任务用：登录过期时不把登录页弹到前台，只报错
   const target = new URL(url);
@@ -118,8 +116,8 @@ async function runBaseDataJob(billNos) {
     const fms = { missing: [], total: 0 };
     for (let i = 0; i < billNos.length; i++) {
       await progress(multi ? `正在读取第 ${i + 1}/${billNos.length} 张账单（${billNos[i]}）缺结算价的明细…` : "正在读取这张账单里缺结算价的明细…", "busy");
-      const one = await withBackgroundTab(BaseDataSync.FMS_BILL_URL, "FMS", (tabId) =>
-        runStep(tabId, BaseDataSync.fetchMissingPriceRows, [billNos[i]], "读取缺价明细")
+      const one = await withTab(FMSConfig.FMS_BILL_URL, "FMS", (tabId) =>
+        runStep(tabId, BaseDataSync.fetchBillMissingRows, [billNos[i]], "读取缺价明细")
       );
       fms.missing.push(...one.missing);
       fms.total += one.total;
@@ -141,8 +139,8 @@ async function runBaseDataJob(billNos) {
       const skuCount = plan.jobs.reduce((n, j) => n + j.skus.length, 0);
       await progress(`缺价明细 ${fms.missing.length} 行，涉及 ${plan.items.length} 个 SKU。正在去 EH 查结算价（${skuCount} 个待查）…`, "busy");
       // EH 的下拉/选择操作依赖动画，放后台标签页里会被浏览器暂停，所以这一步开前台标签页，跑完切回
-      const res = await withBackgroundTab(
-        BaseDataSync.EH_PRICING_URL,
+      const res = await withTab(
+        FMSConfig.EH_PRICING_URL,
         "EH",
         (tabId) => runStep(tabId, BaseDataSync.fetchEhCosts, [plan.jobs], "读取 EH 结算价"),
         { foreground: true }
@@ -185,10 +183,10 @@ async function runMatchQuery(brand, shops) {
   try {
     await setMatch({ ...reset, stage: "", fms: null, text: "正在读取 FMS 基础数据（" + brand + "）…", kind: "busy" });
     // 选下拉、翻页都依赖页面动画，放后台标签页会被浏览器暂停，所以开前台标签页，跑完自动切回
-    const fms = await withBackgroundTab(
-      BaseDataSync.FMS_BASEDATA_URL,
+    const fms = await withTab(
+      FMSConfig.FMS_BASEDATA_URL,
       "FMS",
-      (tabId) => runStep(tabId, BaseDataSync.fetchFmsBaseDataMissing, [brand, shops], "读取 FMS 基础数据"),
+      (tabId) => runStep(tabId, BaseDataSync.fetchBaseDataMissingRows, [brand, shops], "读取 FMS 基础数据"),
       { foreground: true }
     );
     if (!fms.missing.length) {
@@ -235,8 +233,8 @@ async function runMatchResolve() {
     const chans = plan.jobs.map((j) => j.channel);
     const eh = {};
     await setMatch({ ...clear, stats: pendingStats, text: "正在读取 EH（" + chans.join("、") + "）的成本…", kind: "busy" });
-    const res = await withBackgroundTab(
-      BaseDataSync.EH_PRICING_URL,
+    const res = await withTab(
+      FMSConfig.EH_PRICING_URL,
       "EH",
       (tabId) => runStep(tabId, BaseDataSync.fetchEhExportLinks, [chans, brand, FMSBaseData.ehMerchantsOf(brand)], "导出 EH 成本"),
       { foreground: true }
@@ -318,8 +316,8 @@ async function runMatchJob(brand, shops) {
 async function runImport(fileName, base64) {
   const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
   try {
-    const r = await withBackgroundTab(
-      BaseDataSync.FMS_BASEDATA_URL,
+    const r = await withTab(
+      FMSConfig.FMS_BASEDATA_URL,
       "FMS",
       (tabId) => runStep(tabId, BaseDataSync.importBaseDataFile, [fileName, base64], "导入基础数据"),
       { foreground: true }
@@ -354,8 +352,8 @@ async function runGenerateJob(brands, shop, monthsIn) {
   const nameOf = (p) => p.brand + (months.length > 1 ? " " + p.month : "");
   try {
     await setGen({ text: "正在检查 " + label + " 的账单是否已经存在…", kind: "busy", bills: [] });
-    const out = await withBackgroundTab(
-      FMSSync.FMS_BILL_URL,
+    const out = await withTab(
+      FMSConfig.FMS_BILL_URL,
       "FMS",
       async (tabId) => {
         const read = async () => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records;
@@ -453,8 +451,8 @@ async function runRegenJob(billNos) {
   const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
   const multi = billNos.length > 1;
   try {
-    const out = await withBackgroundTab(
-      FMSSync.FMS_BILL_URL,
+    const out = await withTab(
+      FMSConfig.FMS_BILL_URL,
       "FMS",
       async (tabId) => {
         const read = async () => {
@@ -544,8 +542,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // 读 FMS「账单生成」弹窗里品牌下拉的全部选项（FMS 新增品牌后，这里能同步到），存起来给面板的品牌下拉用
     (async () => {
       try {
-        const r = await withBackgroundTab(
-          FMSSync.FMS_BILL_URL,
+        const r = await withTab(
+          FMSConfig.FMS_BILL_URL,
           "FMS",
           (tabId) => runStep(tabId, BillGen.listBrands, [], "读取品牌清单"),
           { foreground: true }
@@ -564,7 +562,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // 读一遍 FMS 账单列表，只留「品牌 / 品牌商公司 / 店铺」，用来列出每个 vendor 下有哪些品牌
     (async () => {
       try {
-        const recs = await withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => {
+        const recs = await withTab(FMSConfig.FMS_BILL_URL, "FMS", async (tabId) => {
           const r = await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表");
           return r.records;
         });
@@ -591,7 +589,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const nos = Array.isArray(msg.billNos) && msg.billNos.length ? msg.billNos : [msg.billNo];
-        const recs = await withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => {
+        const recs = await withTab(FMSConfig.FMS_BILL_URL, "FMS", async (tabId) => {
           const r = await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表");
           return r.records;
         });
@@ -621,7 +619,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const nos = msg.billNos || [];
-        const recs = await withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => {
+        const recs = await withTab(FMSConfig.FMS_BILL_URL, "FMS", async (tabId) => {
           const r = await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表");
           return r.records;
         });
@@ -654,7 +652,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
-  if (msg && (msg.type === "match:start" || msg.type === "match:resolve")) {
+  if (msg && (msg.type === "match:query" || msg.type === "match:resolve")) {
     (async () => {
       const job = (await chrome.storage.local.get(MATCH_KEY))[MATCH_KEY];
       if (job && job.running && Date.now() - (job.startedAt || 0) < STALE_JOB_MS) {
@@ -685,7 +683,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (!msg || msg.type !== "baseData:start") return;
   (async () => {
-    const job = (await chrome.storage.local.get(JOB_KEY))[JOB_KEY];
+    const job = (await chrome.storage.local.get(BILL_FILL_KEY))[BILL_FILL_KEY];
     if (job && job.running && Date.now() - (job.startedAt || 0) < STALE_JOB_MS) {
       sendResponse({ started: false, reason: "已有任务正在进行" });
       return;
@@ -726,8 +724,8 @@ async function cleanBills(records, cfg, save) {
   if (!pick.ok) return tag + "：" + pick.reason;
   const buffers = [];
   for (const no of pick.billNos) {
-    const raw = await withBackgroundTab(
-      FMSSync.FMS_BILL_URL,
+    const raw = await withTab(
+      FMSConfig.FMS_BILL_URL,
       "FMS",
       async (tabId) => {
         const r = await runStep(tabId, FMSAutomation.downloadRawBillFile, [no], "下载账单 " + no);
@@ -765,8 +763,8 @@ async function cleanBills(records, cfg, save) {
 async function generateIfMissing(cfg) {
   if (MonthFlow.isTooEarly(cfg.month, new Date())) return "没生成：结算月份 " + cfg.month + " 还没到可以生成账单的时候（只处理上个月及更早）";
   const key = cfg.brand + "|" + cfg.shop + "|" + cfg.month;
-  const out = await withBackgroundTab(
-    FMSSync.FMS_BILL_URL,
+  const out = await withTab(
+    FMSConfig.FMS_BILL_URL,
     "FMS",
     async (tabId) => {
       const read = async () => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records;
@@ -802,10 +800,10 @@ async function baseDraft(records, cfg) {
   const missing = [];
   let total = 0;
   for (const b of pend) {
-    const one = await withBackgroundTab(
-      BaseDataSync.FMS_BILL_URL,
+    const one = await withTab(
+      FMSConfig.FMS_BILL_URL,
       "FMS",
-      (tabId) => runStep(tabId, BaseDataSync.fetchMissingPriceRows, [b.settlementNo], "读取缺价明细"),
+      (tabId) => runStep(tabId, BaseDataSync.fetchBillMissingRows, [b.settlementNo], "读取缺价明细"),
       { quiet: true }
     );
     missing.push(...one.missing);
@@ -815,8 +813,8 @@ async function baseDraft(records, cfg) {
   const plan = FMSBaseData.planMissing(missing);
   let eh = {};
   if (plan.jobs.length) {
-    const res = await withBackgroundTab(
-      BaseDataSync.EH_PRICING_URL,
+    const res = await withTab(
+      FMSConfig.EH_PRICING_URL,
       "EH",
       (tabId) => runStep(tabId, BaseDataSync.fetchEhCosts, [plan.jobs], "读取 EH 结算价"),
       { quiet: true, foreground: true }
@@ -887,8 +885,8 @@ async function baseApplied(cfg) {
   if (!draft) return "没导入：找不到对应的草稿，请重新触发一次";
   if (Date.now() - draft.at > 24 * 3600 * 1000) return "没导入：草稿已超过 24 小时，请重新触发一次";
   // 导入前再确认一遍：这些账单现在还是「待确认」
-  const records = await withBackgroundTab(
-    FMSSync.FMS_BILL_URL,
+  const records = await withTab(
+    FMSConfig.FMS_BILL_URL,
     "FMS",
     async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records,
     { quiet: true }
@@ -903,8 +901,8 @@ async function baseApplied(cfg) {
   if (!imp.ok) return "导入失败：" + String(imp.error).split("\n")[0] + "（没有重新生成账单）";
   await dropDraft(cfg);
   await new Promise((r) => setTimeout(r, 15000));
-  const status = await withBackgroundTab(
-    FMSSync.FMS_BILL_URL,
+  const status = await withTab(
+    FMSConfig.FMS_BILL_URL,
     "FMS",
     async (tabId) => {
       const read = async () => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records;
@@ -935,7 +933,7 @@ async function baseApplied(cfg) {
 // 不会点任何「提交付款」「请款」之类的按钮。
 async function monthRun(cfg, answers) {
   const readList = () =>
-    withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records, { quiet: true });
+    withTab(FMSConfig.FMS_BILL_URL, "FMS", async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records, { quiet: true });
   const answered = (t) => answers.some((a) => a.chosen === t);
   const label = cfg.brand + " / " + cfg.shop + " / " + cfg.month;
   const log = [];
@@ -989,7 +987,7 @@ async function monthAll(cfg, answers) {
   if (!(cont || (onlyAnswered && sameRun))) prog = { key: pkey, at: Date.now(), cont: false, done: {} };
   prog.cont = false;
 
-  const records = await withBackgroundTab(FMSSync.FMS_BILL_URL, "FMS", async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records, { quiet: true });
+  const records = await withTab(FMSConfig.FMS_BILL_URL, "FMS", async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records, { quiet: true });
   const brands = MonthFlow.brandsOfMonth(records, cfg.shop, cfg.month);
   if (!brands.length) return { summary: "整月流程（全品牌）" + cfg.shop + " / " + cfg.month + "：没有账单" };
   const asks = [];
@@ -1059,8 +1057,8 @@ async function monthDryRun(job) {
   try {
     if (cfg.mode === "month") return Object.assign({ outcome: "done" }, await monthRun(cfg, answers));
     if (cfg.mode === "generate") return { outcome: "done", summary: "生成账单：" + cfg.brand + " / " + cfg.shop + " / " + cfg.month + " → " + (await generateIfMissing(cfg)) };
-    const records = await withBackgroundTab(
-      FMSSync.FMS_BILL_URL,
+    const records = await withTab(
+      FMSConfig.FMS_BILL_URL,
       "FMS",
       async (tabId) => (await runStep(tabId, FMSSync.fetchBillList, [], "读取账单列表")).records,
       { quiet: true }
