@@ -851,6 +851,7 @@ const BaseDataSync = (() => {
         fire(sel.querySelector(".ant-select-selector") || sel);
         await sleep(800);
         await waitFor(() => optEls().length, "Merchant 下拉选项", 10000);
+        window[capKey].length = 0; // 之后点选触发的列表请求，用来核对筛选条件
         let matches = optEls().filter(isMatch);
         if (!matches.length) {
           // 下拉里没有就在搜索框里输入品牌名再找一次
@@ -881,11 +882,25 @@ const BaseDataSync = (() => {
             await sleep(1500);
           }
         }
-        const bad = names.filter((nm) => {
-          const o = optEls().find((e) => e.textContent.trim() === nm);
-          return !o || !/selected/.test(o.className);
-        });
-        if (bad.length) throw new Error("Merchant 选择未生效: " + bad.join("、"));
+        // 核对：页面最后一次发出的列表请求里带的商户数，应该等于选中的商户数
+        // （选完后下拉可能已经收起，选项节点不可靠，所以不看下拉里的样式）
+        const idsOf = (c) => {
+          try {
+            const p = new URL(c.url, location.origin).searchParams;
+            const out = [];
+            for (const [k, v] of p) if (/^merchant/i.test(k)) out.push(...String(v).split(",").filter(Boolean));
+            return out;
+          } catch (e) {
+            return [];
+          }
+        };
+        const lastList = [...window[capKey]].reverse().find((c) => /pricing\/selling\/list/.test(c.url));
+        const nIds = lastList ? idsOf(lastList).length : -1;
+        const boxText = sel.textContent || "";
+        const tagsOk = names.every((nm) => boxText.includes(nm)) || (names.length > 1 && /\+\s*\d+/.test(boxText));
+        if (nIds !== names.length && !(nIds < 0 && tagsOk)) {
+          throw new Error("Merchant 选择未生效（应选 " + names.join("、") + "，页面请求里商户数 " + nIds + "）");
+        }
         // 收起下拉
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
         fire(document.body);

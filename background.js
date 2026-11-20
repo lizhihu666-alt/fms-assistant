@@ -222,6 +222,12 @@ async function runMatchJob(brand, shops) {
         }
       }
     }
+    // 所有渠道都读取失败：直接报告失败原因，别当成「补不上」
+    const ehErrors = Object.entries(eh).filter(([, v]) => v && v.error);
+    if (plan.jobs.length && ehErrors.length === Object.keys(eh).length) {
+      await setMatch({ running: false, kind: "error", ...reset, text: "读取 EH 失败：" + ehErrors.map(([ch, v]) => ch + "：" + v.error).join("；") });
+      return;
+    }
 
     const out = FMSBaseData.resolve(plan.items, eh);
     // 按原因归类，比一长串 SKU 好看；每类只列前几个
