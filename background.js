@@ -310,7 +310,7 @@ async function runMatchJob(brand, shops) {
   await runMatchQuery(brand, shops);
   const job = (await chrome.storage.local.get(MATCH_KEY))[MATCH_KEY] || {};
   if (job.stage !== "queried") return;
-  await setMatch({ running: true });
+  await setMatch({ running: true, startedAt: Date.now(), kind: "busy", text: "第一步完成（缺价 " + ((job.stats && job.stats.skus) || 0) + " 个 SKU），接着去 EH 匹配…" });
   await runMatchResolve();
 }
 
@@ -674,7 +674,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const shops = Array.isArray(msg.shops) ? msg.shops : [];
       await setMatch({ running: true, startedAt: Date.now(), brand: msg.brand, shops, text: "任务已开始…", kind: "busy", stage: "", fms: null, stats: null, unresolved: "", rows: [], fileName: "", warnings: [] });
       sendResponse({ started: true });
-      runMatchQuery(msg.brand, shops);
+      if (msg.auto) runMatchJob(msg.brand, shops); // 两步一起做：查完接着去 EH 匹配
+      else runMatchQuery(msg.brand, shops);
     })();
     return true;
   }

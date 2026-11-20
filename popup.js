@@ -1207,6 +1207,7 @@
   const matchShops = document.getElementById("matchShops");
   const matchBtn = document.getElementById("matchBtn");
   const matchResolveBtn = document.getElementById("matchResolveBtn");
+  const matchAuto = document.getElementById("matchAuto");
   const matchStatus = document.getElementById("matchStatus");
   const matchStats = document.getElementById("matchStats");
   const matchMissing = document.getElementById("matchMissing");
@@ -1255,13 +1256,25 @@
     const done = !!(stage && queried);
     matchBtn.classList.toggle("btn-primary", !done);
     matchBtn.classList.toggle("btn-outline", done);
-    matchBtn.textContent = matchRunning ? "后台处理中…（可以去看别的标签页）" : done ? "重新查询 FMS 缺失 SKU" : "① 查询 FMS 缺失 SKU";
+    const both = matchAuto.checked;
+    matchBtn.textContent = matchRunning
+      ? "后台处理中…（可以去看别的标签页）"
+      : both
+        ? (done ? "重新查询并匹配" : "① 查询 + ② 匹配")
+        : done
+          ? "重新查询 FMS 缺失 SKU"
+          : "① 查询 FMS 缺失 SKU";
+    // 勾了两步一起做、还没查过时，第一步按钮就是主按钮
+    if (both && !done) {
+      matchBtn.classList.add("btn-primary");
+      matchBtn.classList.remove("btn-outline");
+    }
     matchResolveBtn.hidden = !stage || !queried;
     matchResolveBtn.disabled = matchRunning;
     matchResolveBtn.textContent = "② 去 EH 匹配" + (queried ? "（" + queried.brand + "）" : "");
   }
   function saveMatchForm() {
-    matchSaved = { brand: matchBrand.value, shops: selectedMatchShops() };
+    matchSaved = { brand: matchBrand.value, shops: selectedMatchShops(), auto: matchAuto.checked };
     chrome.storage.local.set({ matchForm: matchSaved });
   }
   matchBrand.addEventListener("change", () => {
@@ -1269,6 +1282,10 @@
     updateMatchBtn();
   });
   matchShops.addEventListener("change", () => {
+    saveMatchForm();
+    updateMatchBtn();
+  });
+  matchAuto.addEventListener("change", () => {
     saveMatchForm();
     updateMatchBtn();
   });
@@ -1442,7 +1459,7 @@
     updateMatchBtn();
     let res;
     try {
-      res = await chrome.runtime.sendMessage({ type: "match:start", brand, shops });
+      res = await chrome.runtime.sendMessage({ type: "match:start", brand, shops, auto: matchAuto.checked });
     } catch (e) {
       res = null;
     }
@@ -1516,6 +1533,7 @@
     // 没存过选择时，用上一次任务的品牌和店铺
     matchSaved = r.matchForm || (r.matchJob && r.matchJob.brand ? { brand: r.matchJob.brand, shops: r.matchJob.shops } : null);
     matchShops.innerHTML = ""; // 按存下的选择重建店铺勾选
+    matchAuto.checked = !!(matchSaved && matchSaved.auto);
     renderMatchForm();
     renderMatchJob(r.matchJob);
   });
