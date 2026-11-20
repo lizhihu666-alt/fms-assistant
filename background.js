@@ -244,13 +244,21 @@ async function runMatchResolve() {
     // 导出文件由后台取回并解析：成本优先取 Cost(Active)，没有再取 Base Cost(Active)
     for (const ch of chans) {
       const r = res.results[ch] || {};
-      if (r.error || !r.url) { eh[ch] = { skus: {}, count: 0, error: r.error || "没有拿到导出文件" }; continue; }
+      const files = r.files || (r.url ? [{ url: r.url, fileName: r.fileName }] : []);
+      if (r.error || !files.length) { eh[ch] = { skus: {}, count: 0, error: r.error || "没有拿到导出文件" }; continue; }
       try {
-        await setMatch({ text: "EH（" + ch + "）导出已生成，正在读取 " + r.fileName + "…", kind: "busy" });
-        const resp = await fetch(r.url);
-        if (!resp.ok) throw new Error("下载导出文件失败 HTTP " + resp.status);
-        const parsed = FMSBaseData.parseEhPricingCsv(await resp.text());
-        eh[ch] = { skus: parsed.skus, count: parsed.count };
+        // 一个商户一个文件，合并后再和缺价 SKU 对比；已经有成本的不被没成本的覆盖
+        const merged = {};
+        for (const f of files) {
+          await setMatch({ text: "EH（" + ch + "）导出已生成，正在读取 " + f.fileName + "…", kind: "busy" });
+          const resp = await fetch(f.url);
+          if (!resp.ok) throw new Error("下载导出文件失败 HTTP " + resp.status);
+          const parsed = FMSBaseData.parseEhPricingCsv(await resp.text());
+          for (const [k, v] of Object.entries(parsed.skus)) {
+            if (!merged[k] || (merged[k].cost === "" && v.cost !== "")) merged[k] = v;
+          }
+        }
+        eh[ch] = { skus: merged, count: Object.keys(merged).length };
       } catch (e) {
         eh[ch] = { skus: {}, count: 0, error: (e && e.message) || String(e) };
       }

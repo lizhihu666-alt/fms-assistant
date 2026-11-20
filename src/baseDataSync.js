@@ -831,38 +831,55 @@ const BaseDataSync = (() => {
       // 在 Merchant 筛选里选中名字含品牌名的商户（EH 的商户名和 FMS 品牌名不完全一样，如 Attraco 对 Attraco-Drop Ship），
       // 取消其它已选的商户，保证「匹配当前搜索」导出的只是这个品牌
       const normName = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-      async function selectMerchants(brandName, exact) {
-        const want = normName(brandName);
-        if (!want) throw new Error("没有品牌名，不能筛选 EH 商户");
-        const exactSet = new Set((exact || []).map(normName));
+      // ---- Merchant 筛选：一次只选一个商户，一个商户导出一个文件（单选、多选的下拉都适用） ----
+      const merchantSel = async () => {
         const leaf = await waitFor(
           () => [...document.querySelectorAll(".ant-select *")].find((e) => vis(e) && e.children.length === 0 && /^Merchant$/.test(e.textContent.trim())),
           "Merchant 筛选",
           15000
         );
-        const sel = leaf.closest(".ant-select");
-        const optEls = () => [...document.querySelectorAll(".ant-select-item-option")].filter(vis);
-        const isSel = (o) => /selected/.test(o.className);
-        // 有指定对应关系就按名字精确匹配，没有就按「商户名包含品牌名」
+        return leaf.closest(".ant-select");
+      };
+      const optEls = () => [...document.querySelectorAll(".ant-select-item-option")].filter(vis);
+      const isSel = (o) => /selected/.test(o.className);
+      const optByName = (nm) => optEls().find((e) => e.textContent.trim() === nm);
+      // 点选后页面可能把下拉收起，所以每一步前都确认下拉是开着的
+      async function ensureOpen(sel) {
+        if (optEls().length) return;
+        fire(sel.querySelector(".ant-select-selector") || sel);
+        await sleep(800);
+        await waitFor(() => optEls().length, "Merchant 下拉选项", 10000);
+      }
+      async function closeDropdown() {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        fire(document.body);
+        await sleep(1500); // 收起后页面按新商户重新查询
+      }
+      const idsOf = (c) => {
+        try {
+          const p = new URL(c.url, location.origin).searchParams;
+          const out = [];
+          for (const [k, v] of p) if (/^merchant/i.test(k)) out.push(...String(v).split(",").filter(Boolean));
+          return out;
+        } catch (e) {
+          return [];
+        }
+      };
+
+      // 找出名字对得上的 EH 商户（有指定对应关系就精确匹配，没有就按「商户名包含品牌名」）
+      async function findMerchants(brandName, exact) {
+        const want = normName(brandName);
+        if (!want) throw new Error("没有品牌名，不能筛选 EH 商户");
+        const exactSet = new Set((exact || []).map(normName));
         const isMatch = (o) => {
           const n = normName(o.textContent);
           if (!n) return false;
           return exactSet.size ? exactSet.has(n) : n.includes(want);
         };
-        // 点选一个商户后，页面可能会把下拉收起，所以每一步前都确认下拉是开着的
-        async function ensureOpen() {
-          if (optEls().length) return;
-          fire(sel.querySelector(".ant-select-selector") || sel);
-          await sleep(800);
-          await waitFor(() => optEls().length, "Merchant 下拉选项", 10000);
-        }
-        const optByName = (nm) => optEls().find((e) => e.textContent.trim() === nm);
-
-        await ensureOpen();
-        window[capKey].length = 0; // 之后点选触发的列表请求，用来核对筛选条件
+        const sel = await merchantSel();
+        await ensureOpen(sel);
         let matches = optEls().filter(isMatch);
         if (!matches.length) {
-          // 下拉里没有就在搜索框里输入名字再找一次
           const input = sel.querySelector("input");
           if (input) {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, (exact && exact[0]) || brandName);
@@ -872,128 +889,122 @@ const BaseDataSync = (() => {
           }
         }
         if (!matches.length) throw new Error("EH 的 Merchant 里找不到" + (exactSet.size ? "商户 " + exact.join("、") : "名字含「" + brandName + "」的商户"));
-        const names = matches.map((o) => o.textContent.trim());
+        const names = [...new Set(matches.map((o) => o.textContent.trim()))];
+        await closeDropdown();
+        return names;
+      }
 
-        // 逐个选中；每点一个都重新确认下拉开着，并确认这个确实选上了（没选上就再点一次）
-        for (const nm of names) {
-          for (let attempt = 0; attempt < 3; attempt++) {
-            await ensureOpen();
-            const o = optByName(nm);
-            if (!o) break;
-            if (isSel(o)) break;
+      // 只选这一个商户：没选上就点，选着别的就取消，最后重新打开下拉核对
+      async function selectOnly(name) {
+        const sel = await merchantSel();
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await ensureOpen(sel);
+          const o = optByName(name);
+          if (!o) throw new Error("Merchant 下拉里没有 " + name);
+          if (!isSel(o)) {
+            window[capKey].length = 0;
             o.click();
             await sleep(1500);
+            continue;
           }
-        }
-        // 取消不匹配却还选着的
-        for (let round = 0; round < 3; round++) {
-          await ensureOpen();
-          const extra = optEls().find((e) => isSel(e) && !isMatch(e));
+          const extra = optEls().find((e) => isSel(e) && e.textContent.trim() !== name);
           if (!extra) break;
           extra.click();
           await sleep(1500);
         }
-        // 最终核对：重新打开下拉，每个目标商户都要是选中状态，且没有多选别的
-        await ensureOpen();
-        const bad = names.filter((nm) => {
-          const o = optByName(nm);
-          return !o || !isSel(o);
-        });
-        const wrong = optEls().filter((e) => isSel(e) && !isMatch(e)).map((e) => e.textContent.trim());
-        // 辅助信号：页面是否发出过恰好带这几个商户的列表请求（下拉样式认不出时靠它）
-        const idsOf = (c) => {
-          try {
-            const p = new URL(c.url, location.origin).searchParams;
-            const out = [];
-            for (const [k, v] of p) if (/^merchant/i.test(k)) out.push(...String(v).split(",").filter(Boolean));
-            return out;
-          } catch (e) {
-            return [];
-          }
-        };
-        const reqOk = window[capKey].some((c) => /pricing\/selling\/list/.test(c.url) && idsOf(c).length === names.length);
-        if ((bad.length || wrong.length) && !reqOk) {
-          throw new Error("Merchant 选择未生效（应选 " + names.join("、") + "；没选上：" + (bad.join("、") || "无") + "；多选了：" + (wrong.join("、") || "无") + "）");
+        await ensureOpen(sel);
+        const o = optByName(name);
+        const extras = optEls().filter((e) => isSel(e) && e.textContent.trim() !== name).map((e) => e.textContent.trim());
+        // 辅助信号：页面发出过恰好带 1 个商户的列表请求（下拉样式认不出时靠它）
+        const reqOk = window[capKey].some((c) => /pricing\/selling\/list/.test(c.url) && idsOf(c).length === 1);
+        if ((!o || !isSel(o) || extras.length) && !reqOk) {
+          throw new Error("Merchant 选择未生效（应只选 " + name + "；" + (!o || !isSel(o) ? "没选上" : "") + (extras.length ? "多选了：" + extras.join("、") : "") + "）");
         }
-        // 收起下拉，页面按新商户重新查询
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-        fire(document.body);
-        await sleep(1500);
-        step("Merchant 已核对：" + names.join("、"));
-        return names;
+        await closeDropdown();
+      }
+
+      // ---- 导出当前筛选结果，返回下载地址 ----
+      const usedTaskIds = new Set();
+      async function exportCurrent(label) {
+        const startSec = Math.floor(Date.now() / 1000) - 30;
+        window[capKey].length = 0;
+        const eb = await waitFor(exportBtn, "Export 按钮", 15000);
+        eb.click();
+        const radio = await waitFor(() => [...document.querySelectorAll("label")].filter(vis).find((l) => /Records matching your search/i.test(l.textContent)), "导出范围选项", 10000);
+        const input = radio.querySelector("input");
+        if (input && !input.checked) radio.click();
+        const ok = await waitFor(() => [...document.querySelectorAll("button")].filter(vis).find((b) => /^\s*OK\s*$/.test(b.textContent)), "OK 按钮", 10000);
+        ok.click();
+        const created = await waitFor(() => window[capKey].find((c) => /pricing\/selling\/export/.test(c.url)), "创建导出任务", 30000);
+        const cj = parse(created);
+        if (!cj || cj.code !== 0) throw new Error("创建导出任务失败: " + ((cj && (cj.message || cj.code)) || "无返回"));
+        step(label + " 已创建导出任务");
+
+        // 打开任务列表，等这次点出来的任务完成（已经取过的任务不再认）
+        let item = null;
+        const deadline = Date.now() + 240000;
+        while (Date.now() < deadline && !item) {
+          window[capKey].length = 0;
+          const icon = await waitFor(taskIcon, "导出任务图标", 10000);
+          if (!taskItems().length) fire(icon.closest("button") || icon);
+          await waitFor(() => window[capKey].find((c) => /export\/list/.test(c.url)), "导出任务列表", 20000);
+          const lj = parse(window[capKey].filter((c) => /export\/list/.test(c.url)).pop());
+          const list = (lj && lj.data && lj.data.list) || [];
+          const latest = list.filter((t) => t.export_type === "admin_pricing" && t.created_at >= startSec && !usedTaskIds.has(t.id))[0];
+          if (latest && latest.status === 2) {
+            item = latest;
+          } else if (latest && latest.status !== 1 && latest.status !== 0) {
+            throw new Error("导出任务状态异常: " + (latest.status_name || latest.status) + (latest.failure_reason ? "（" + latest.failure_reason + "）" : ""));
+          } else {
+            step(label + " 导出生成中…");
+            if (taskItems().length) fire(icon.closest("button") || icon); // 关掉再开，触发刷新
+            await sleep(4000);
+          }
+        }
+        if (!item) throw new Error("导出任务 4 分钟内没有完成");
+        usedTaskIds.add(item.id);
+
+        // 点这条任务的 Download，截取下载地址
+        window[capKey].length = 0;
+        if (!taskItems().length) fire((await waitFor(taskIcon, "导出任务图标", 10000)).closest("button") || taskIcon());
+        const nameEl = await waitFor(() => taskItems().find((e) => e.textContent.trim() === item.file_name), "任务列表里的 " + item.file_name, 10000);
+        let box = nameEl;
+        let dl = null;
+        for (let i = 0; i < 6 && box && !dl; i++, box = box.parentElement) {
+          dl = [...box.querySelectorAll("span,button,a")].find((e) => vis(e) && /^\s*Download\s*$/.test(e.textContent) && e.children.length === 0);
+        }
+        if (!dl) throw new Error("找不到 Download 按钮");
+        (dl.closest("button") || dl).click();
+        const hit = await waitFor(() => window[capKey].find((c) => /export\/download-url/.test(c.url)), "下载地址", 30000);
+        const dj = parse(hit);
+        const url = dj && dj.data && dj.data.url;
+        if (!url) throw new Error("没有拿到下载地址");
+        // 收起任务列表
+        const icon2 = taskIcon();
+        if (icon2 && taskItems().length) fire(icon2.closest("button") || icon2);
+        await sleep(500);
+        return { url, fileName: item.file_name };
       }
 
       const results = {};
       for (const ch of channels) {
-        const res = {};
+        const res = { files: [] };
         results[ch] = res;
         try {
           const switched = await setChannel(ch);
           step("Channel: " + ch + (switched ? "（已切换）" : "（当前）"));
           await sleep(1500);
-          const picked = await selectMerchants(brand, exactMerchants);
-          step("已筛选 EH 商户: " + picked.join("、"));
-          await sleep(1500); // 等列表按新 Channel 刷新，导出范围才是这个 Channel
-
-          // Export → Records matching your search → OK
-          const startSec = Math.floor(Date.now() / 1000) - 30; // 只认这次点出来的任务
-          window[capKey].length = 0;
-          const eb = await waitFor(exportBtn, "Export 按钮", 15000);
-          eb.click();
-          const radio = await waitFor(() => [...document.querySelectorAll("label")].filter(vis).find((l) => /Records matching your search/i.test(l.textContent)), "导出范围选项", 10000);
-          const input = radio.querySelector("input");
-          if (input && !input.checked) radio.click();
-          const ok = await waitFor(() => [...document.querySelectorAll("button")].filter(vis).find((b) => /^\s*OK\s*$/.test(b.textContent)), "OK 按钮", 10000);
-          ok.click();
-          const created = await waitFor(() => window[capKey].find((c) => /pricing\/selling\/export/.test(c.url)), "创建导出任务", 30000);
-          const cj = parse(created);
-          if (!cj || cj.code !== 0) throw new Error("创建导出任务失败: " + ((cj && (cj.message || cj.code)) || "无返回"));
-          step(ch + " 已创建导出任务");
-
-          // 打开任务列表，等最新一条 admin_pricing 任务完成
-          let item = null;
-          const deadline = Date.now() + 240000;
-          while (Date.now() < deadline && !item) {
-            window[capKey].length = 0;
-            const icon = await waitFor(taskIcon, "导出任务图标", 10000);
-            if (!taskItems().length) fire(icon.closest("button") || icon);
-            await waitFor(() => window[capKey].find((c) => /export\/list/.test(c.url)), "导出任务列表", 20000);
-            const lj = parse(window[capKey].filter((c) => /export\/list/.test(c.url)).pop());
-            const list = (lj && lj.data && lj.data.list) || [];
-            const latest = list.filter((t) => t.export_type === "admin_pricing" && t.created_at >= startSec)[0];
-            if (latest && latest.status === 2) {
-              item = latest;
-            } else if (latest && latest.status !== 1 && latest.status !== 0) {
-              throw new Error("导出任务状态异常: " + (latest.status_name || latest.status) + (latest.failure_reason ? "（" + latest.failure_reason + "）" : ""));
-            } else {
-              step(ch + " 导出生成中…");
-              if (taskItems().length) fire(icon.closest("button") || icon); // 关掉再开，触发刷新
-              await sleep(4000);
-            }
+          const names = await findMerchants(brand, exactMerchants);
+          step("EH 商户: " + names.join("、") + "（逐个导出）");
+          for (const nm of names) {
+            await selectOnly(nm);
+            step("已筛选商户 " + nm);
+            await sleep(1500);
+            const f = await exportCurrent(ch + "/" + nm);
+            f.merchant = nm;
+            res.files.push(f);
+            step(ch + "/" + nm + " 导出文件已生成: " + f.fileName);
           }
-          if (!item) throw new Error("导出任务 4 分钟内没有完成");
-
-          // 点这条任务的 Download，截取下载地址
-          window[capKey].length = 0;
-          if (!taskItems().length) fire((await waitFor(taskIcon, "导出任务图标", 10000)).closest("button") || taskIcon());
-          const nameEl = await waitFor(() => taskItems().find((e) => e.textContent.trim() === item.file_name), "任务列表里的 " + item.file_name, 10000);
-          let box = nameEl;
-          let dl = null;
-          for (let i = 0; i < 6 && box && !dl; i++, box = box.parentElement) {
-            dl = [...box.querySelectorAll("span,button,a")].find((e) => vis(e) && /^\s*Download\s*$/.test(e.textContent) && e.children.length === 0);
-          }
-          if (!dl) throw new Error("找不到 Download 按钮");
-          (dl.closest("button") || dl).click();
-          const hit = await waitFor(() => window[capKey].find((c) => /export\/download-url/.test(c.url)), "下载地址", 30000);
-          const dj = parse(hit);
-          const url = dj && dj.data && dj.data.url;
-          if (!url) throw new Error("没有拿到下载地址");
-          res.url = url;
-          res.fileName = item.file_name;
-          step(ch + " 导出文件已生成: " + item.file_name);
-          // 收起任务列表
-          const icon2 = taskIcon();
-          if (icon2 && taskItems().length) fire(icon2.closest("button") || icon2);
         } catch (err) {
           res.error = (err && err.message) || String(err);
           step(ch + " 失败: " + res.error);
