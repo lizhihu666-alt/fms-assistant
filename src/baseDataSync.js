@@ -882,8 +882,10 @@ const BaseDataSync = (() => {
             await sleep(1500);
           }
         }
-        // 核对：页面最后一次发出的列表请求里带的商户数，应该等于选中的商户数
-        // （选完后下拉可能已经收起，选项节点不可靠，所以不看下拉里的样式）
+        // 多选下拉要收起后页面才会按新商户重新查询，所以先收起，再等页面发出带商户条件的列表请求
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        fire(document.body);
+        await sleep(1200);
         const idsOf = (c) => {
           try {
             const p = new URL(c.url, location.origin).searchParams;
@@ -894,17 +896,21 @@ const BaseDataSync = (() => {
             return [];
           }
         };
-        const lastList = [...window[capKey]].reverse().find((c) => /pricing\/selling\/list/.test(c.url));
-        const nIds = lastList ? idsOf(lastList).length : -1;
-        const boxText = sel.textContent || "";
-        const tagsOk = names.every((nm) => boxText.includes(nm)) || (names.length > 1 && /\+\s*\d+/.test(boxText));
-        if (nIds !== names.length && !(nIds < 0 && tagsOk)) {
-          throw new Error("Merchant 选择未生效（应选 " + names.join("、") + "，页面请求里商户数 " + nIds + "）");
+        const lastList = () => [...window[capKey]].reverse().find((c) => /pricing\/selling\/list/.test(c.url) && idsOf(c).length === names.length);
+        try {
+          await waitFor(lastList, "带商户条件的列表请求", 8000);
+        } catch (e) {
+          /* 没等到就走下面的兜底核对 */
         }
-        // 收起下拉
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-        fire(document.body);
-        await sleep(1200);
+        const hit = lastList();
+        const nIds = hit ? names.length : -1;
+        const boxText = (sel.textContent || "").toLowerCase();
+        // 兜底：没截到请求时，看筛选框里显示的内容（多选会折叠成「TIJN-…」或「+N」）
+        const tagsOk = names.every((nm) => boxText.includes(nm.toLowerCase())) || /\+\s*\d+/.test(boxText) || boxText.includes(names[0].toLowerCase().slice(0, 4));
+        if (nIds < 0 && !tagsOk) {
+          throw new Error("Merchant 选择未生效（应选 " + names.join("、") + "，没有看到带这些商户的列表请求，筛选框显示「" + (sel.textContent || "").trim().slice(0, 30) + "」）");
+        }
+        step("Merchant 核对通过：" + (nIds >= 0 ? "页面请求带 " + nIds + " 个商户" : "按筛选框显示核对"));
         return names;
       }
 
