@@ -162,3 +162,4 @@ button.stat-tile:not(:disabled):hover { border-color: var(--blue-100); }
 button.stat-tile.active { border-color: var(--blue-500); box-shadow: inset 0 0 0 1px var(--blue-500); }
 .missing-sku { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .sku-price { flex: none; font-family: inherit; font-weight: 600; color: var(--green-600); }
+.sku-reason { flex: none; font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 11.5px; font-weight: 600; color: #c0392b; }

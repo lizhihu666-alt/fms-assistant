@@ -1302,10 +1302,15 @@
       }
     } else if (matchView === "unresolved") {
       title = "补不上";
-      const list = job.unresolvedList || [];
-      const multiShop = new Set(list.map((u) => where(u.shop, u.site))).size > 1;
-      for (const u of list) {
-        add(u.reason + (multiShop ? " · " + where(u.shop, u.site) : ""), '<div class="missing-sku"><span>' + escHtml(u.sku) + "</span></div>", u.sku);
+      // 原因缩成几个字放在行右边（和能补那边的价格同一个位置），完整原因放在鼠标悬停提示里
+      const short = (r) =>
+        /没有成本/.test(r) ? "EH 无成本" : /搜不到/.test(r) ? "EH 搜不到" : /币种/.test(r) ? "币种不一致" : /Channel|渠道/.test(r) ? "无 EH 渠道" : /查询失败|失败/.test(r) ? "EH 查询失败" : r;
+      for (const u of job.unresolvedList || []) {
+        add(
+          where(u.shop, u.site),
+          '<div class="missing-sku"><span>' + escHtml(u.sku) + '</span><span class="sku-reason" title="' + escHtml(u.reason) + '">' + escHtml(short(u.reason)) + "</span></div>",
+          u.sku
+        );
       }
     } else {
       title = "缺价 SKU";
