@@ -250,6 +250,10 @@
         <button id="matchResolveBtn" type="button" class="btn btn-primary btn-full" hidden>② 去 EH 匹配</button>
         <div id="matchStatus" class="status" hidden></div>
         <div id="matchStats" class="stat-grid match-stats" hidden></div>
+        <details id="matchMissing" class="match-missing" hidden>
+          <summary id="matchMissingSummary">FMS 缺失 SKU</summary>
+          <pre id="matchMissingList" class="match-unresolved"></pre>
+        </details>
         <pre id="matchUnresolved" class="match-unresolved" hidden></pre>
         <a id="matchDownload" class="file-chip file-chip-link" hidden download>
           <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -1209,6 +1209,10 @@
   const matchResolveBtn = document.getElementById("matchResolveBtn");
   const matchStatus = document.getElementById("matchStatus");
   const matchStats = document.getElementById("matchStats");
+  const matchMissing = document.getElementById("matchMissing");
+  const matchMissingSummary = document.getElementById("matchMissingSummary");
+  const matchMissingList = document.getElementById("matchMissingList");
+  let matchMissingKey = "";
   const matchUnresolved = document.getElementById("matchUnresolved");
   const matchDownload = document.getElementById("matchDownload");
   const matchDownloadText = document.getElementById("matchDownloadText");
@@ -1259,7 +1263,7 @@
     matchRunning = !!(job && job.running);
     updateMatchBtn();
     if (!job || !job.text) {
-      [matchStatus, matchStats, matchUnresolved, matchDownload, matchImportBox].forEach((e) => (e.hidden = true));
+      [matchStatus, matchStats, matchMissing, matchUnresolved, matchDownload, matchImportBox].forEach((e) => (e.hidden = true));
       return;
     }
     matchStatus.hidden = false;
@@ -1273,6 +1277,26 @@
         '<div class="stat-tile"><span class="stat-num">' + st.skus + '</span><span class="stat-label">缺价 SKU</span></div>' +
         '<div class="stat-tile ok"><span class="stat-num">' + (st.matched == null ? "–" : st.matched) + '</span><span class="stat-label">EH 能补</span></div>' +
         '<div class="stat-tile ' + (st.unresolved ? "overdue" : "") + '"><span class="stat-num">' + (st.unresolved == null ? "–" : st.unresolved) + '</span><span class="stat-label">补不上</span></div>';
+    }
+    // 第一步查出来的缺失 SKU 全部列出来（按 站点+店铺+SKU 去重）
+    const miss = job.fms && job.fms.missing;
+    matchMissing.hidden = !(miss && miss.length);
+    if (!matchMissing.hidden) {
+      const seen = new Set();
+      const lines = [];
+      for (const r of miss) {
+        const k = [r.siteCode, r.shopCode, r.sku].join("|");
+        if (seen.has(k)) continue;
+        seen.add(k);
+        lines.push([r.sku, (r.shopCode || "") + "/" + (r.siteCode || ""), [r.style, r.color, r.size].filter(Boolean).join(" ")].join("  "));
+      }
+      matchMissingSummary.textContent = "FMS 缺失 SKU（" + lines.length + " 个）";
+      matchMissingList.textContent = lines.join("\n");
+      const key = job.fms.brand + ":" + lines.length + ":" + miss.length;
+      if (key !== matchMissingKey) {
+        matchMissingKey = key;
+        matchMissing.open = true; // 新查出来的先展开，之后用户折叠了就不再自动展开
+      }
     }
     const skipped = st && st.skipped ? Object.entries(st.skipped) : [];
     const extra = [];

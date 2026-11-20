@@ -842,19 +842,27 @@ const BaseDataSync = (() => {
         );
         const sel = leaf.closest(".ant-select");
         const optEls = () => [...document.querySelectorAll(".ant-select-item-option")].filter(vis);
+        const isSel = (o) => /selected/.test(o.className);
         // 有指定对应关系就按名字精确匹配，没有就按「商户名包含品牌名」
         const isMatch = (o) => {
           const n = normName(o.textContent);
           if (!n) return false;
           return exactSet.size ? exactSet.has(n) : n.includes(want);
         };
-        fire(sel.querySelector(".ant-select-selector") || sel);
-        await sleep(800);
-        await waitFor(() => optEls().length, "Merchant 下拉选项", 10000);
+        // 点选一个商户后，页面可能会把下拉收起，所以每一步前都确认下拉是开着的
+        async function ensureOpen() {
+          if (optEls().length) return;
+          fire(sel.querySelector(".ant-select-selector") || sel);
+          await sleep(800);
+          await waitFor(() => optEls().length, "Merchant 下拉选项", 10000);
+        }
+        const optByName = (nm) => optEls().find((e) => e.textContent.trim() === nm);
+
+        await ensureOpen();
         window[capKey].length = 0; // 之后点选触发的列表请求，用来核对筛选条件
         let matches = optEls().filter(isMatch);
         if (!matches.length) {
-          // 下拉里没有就在搜索框里输入品牌名再找一次
+          // 下拉里没有就在搜索框里输入名字再找一次
           const input = sel.querySelector("input");
           if (input) {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, (exact && exact[0]) || brandName);
@@ -865,27 +873,34 @@ const BaseDataSync = (() => {
         }
         if (!matches.length) throw new Error("EH 的 Merchant 里找不到" + (exactSet.size ? "商户 " + exact.join("、") : "名字含「" + brandName + "」的商户"));
         const names = matches.map((o) => o.textContent.trim());
-        // 先选中匹配的（每次重新找，避免点击后节点被重绘）
+
+        // 逐个选中；每点一个都重新确认下拉开着，并确认这个确实选上了（没选上就再点一次）
         for (const nm of names) {
-          const o = optEls().find((e) => e.textContent.trim() === nm);
-          if (o && !/selected/.test(o.className)) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            await ensureOpen();
+            const o = optByName(nm);
+            if (!o) break;
+            if (isSel(o)) break;
             o.click();
             await sleep(1500);
           }
         }
-        // 再取消不匹配却还选着的
-        for (const o0 of optEls().filter((e) => /selected/.test(e.className) && !isMatch(e))) {
-          const nm = o0.textContent.trim();
-          const o = optEls().find((e) => e.textContent.trim() === nm);
-          if (o && /selected/.test(o.className)) {
-            o.click();
-            await sleep(1500);
-          }
+        // 取消不匹配却还选着的
+        for (let round = 0; round < 3; round++) {
+          await ensureOpen();
+          const extra = optEls().find((e) => isSel(e) && !isMatch(e));
+          if (!extra) break;
+          extra.click();
+          await sleep(1500);
         }
-        // 多选下拉要收起后页面才会按新商户重新查询，所以先收起，再等页面发出带商户条件的列表请求
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-        fire(document.body);
-        await sleep(1200);
+        // 最终核对：重新打开下拉，每个目标商户都要是选中状态，且没有多选别的
+        await ensureOpen();
+        const bad = names.filter((nm) => {
+          const o = optByName(nm);
+          return !o || !isSel(o);
+        });
+        const wrong = optEls().filter((e) => isSel(e) && !isMatch(e)).map((e) => e.textContent.trim());
+        // 辅助信号：页面是否发出过恰好带这几个商户的列表请求（下拉样式认不出时靠它）
         const idsOf = (c) => {
           try {
             const p = new URL(c.url, location.origin).searchParams;
@@ -896,21 +911,15 @@ const BaseDataSync = (() => {
             return [];
           }
         };
-        const lastList = () => [...window[capKey]].reverse().find((c) => /pricing\/selling\/list/.test(c.url) && idsOf(c).length === names.length);
-        try {
-          await waitFor(lastList, "带商户条件的列表请求", 8000);
-        } catch (e) {
-          /* 没等到就走下面的兜底核对 */
+        const reqOk = window[capKey].some((c) => /pricing\/selling\/list/.test(c.url) && idsOf(c).length === names.length);
+        if ((bad.length || wrong.length) && !reqOk) {
+          throw new Error("Merchant 选择未生效（应选 " + names.join("、") + "；没选上：" + (bad.join("、") || "无") + "；多选了：" + (wrong.join("、") || "无") + "）");
         }
-        const hit = lastList();
-        const nIds = hit ? names.length : -1;
-        const boxText = (sel.textContent || "").toLowerCase();
-        // 兜底：没截到请求时，看筛选框里显示的内容（多选会折叠成「TIJN-…」或「+N」）
-        const tagsOk = names.every((nm) => boxText.includes(nm.toLowerCase())) || /\+\s*\d+/.test(boxText) || boxText.includes(names[0].toLowerCase().slice(0, 4));
-        if (nIds < 0 && !tagsOk) {
-          throw new Error("Merchant 选择未生效（应选 " + names.join("、") + "，没有看到带这些商户的列表请求，筛选框显示「" + (sel.textContent || "").trim().slice(0, 30) + "」）");
-        }
-        step("Merchant 核对通过：" + (nIds >= 0 ? "页面请求带 " + nIds + " 个商户" : "按筛选框显示核对"));
+        // 收起下拉，页面按新商户重新查询
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        fire(document.body);
+        await sleep(1500);
+        step("Merchant 已核对：" + names.join("、"));
         return names;
       }
 
