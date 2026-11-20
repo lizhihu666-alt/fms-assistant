@@ -737,9 +737,10 @@ const BaseDataSync = (() => {
   /**
    * EH「Pricing」页：对每个 Channel 点右上角 Export →「匹配当前搜索」→ OK，等导出任务完成，
    * 再点任务列表里的 Download，只截取页面自己请求到的下载地址（不下载到本机、不读取任何登录信息）。
+   * 导出前先在 Merchant 筛选里选中名字和品牌对得上的商户（只导出这个品牌，不导出整个渠道）；
    * 返回 { ok, results: { [channel]: { url, fileName, error? } }, log }；CSV 由后台用该地址取回。
    */
-  async function fetchEhExportLinks(channels) {
+  async function fetchEhExportLinks(channels, brand) {
     const log = [];
     const step = (m) => log.push(m);
     const restore = [];
@@ -827,6 +828,68 @@ const BaseDataSync = (() => {
       const taskItems = () => [...document.querySelectorAll('[class*="_filename_"]')].filter(vis);
       const exportBtn = () => [...document.querySelectorAll("button")].find((b) => vis(b) && /^\s*Export\s*$/.test(b.textContent) && b.getBoundingClientRect().top < 200);
 
+      // 在 Merchant 筛选里选中名字含品牌名的商户（EH 的商户名和 FMS 品牌名不完全一样，如 Attraco 对 Attraco-Drop Ship），
+      // 取消其它已选的商户，保证「匹配当前搜索」导出的只是这个品牌
+      const normName = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      async function selectMerchants(brandName) {
+        const want = normName(brandName);
+        if (!want) throw new Error("没有品牌名，不能筛选 EH 商户");
+        const leaf = await waitFor(
+          () => [...document.querySelectorAll(".ant-select *")].find((e) => vis(e) && e.children.length === 0 && /^Merchant$/.test(e.textContent.trim())),
+          "Merchant 筛选",
+          15000
+        );
+        const sel = leaf.closest(".ant-select");
+        const optEls = () => [...document.querySelectorAll(".ant-select-item-option")].filter(vis);
+        const isMatch = (o) => {
+          const n = normName(o.textContent);
+          return n && (n.includes(want) || want.includes(n));
+        };
+        fire(sel.querySelector(".ant-select-selector") || sel);
+        await sleep(800);
+        await waitFor(() => optEls().length, "Merchant 下拉选项", 10000);
+        let matches = optEls().filter(isMatch);
+        if (!matches.length) {
+          // 下拉里没有就在搜索框里输入品牌名再找一次
+          const input = sel.querySelector("input");
+          if (input) {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, brandName);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await sleep(1000);
+            matches = optEls().filter(isMatch);
+          }
+        }
+        if (!matches.length) throw new Error("EH 的 Merchant 里找不到名字含「" + brandName + "」的商户");
+        const names = matches.map((o) => o.textContent.trim());
+        // 先选中匹配的（每次重新找，避免点击后节点被重绘）
+        for (const nm of names) {
+          const o = optEls().find((e) => e.textContent.trim() === nm);
+          if (o && !/selected/.test(o.className)) {
+            o.click();
+            await sleep(1500);
+          }
+        }
+        // 再取消不匹配却还选着的
+        for (const o0 of optEls().filter((e) => /selected/.test(e.className) && !isMatch(e))) {
+          const nm = o0.textContent.trim();
+          const o = optEls().find((e) => e.textContent.trim() === nm);
+          if (o && /selected/.test(o.className)) {
+            o.click();
+            await sleep(1500);
+          }
+        }
+        const bad = names.filter((nm) => {
+          const o = optEls().find((e) => e.textContent.trim() === nm);
+          return !o || !/selected/.test(o.className);
+        });
+        if (bad.length) throw new Error("Merchant 选择未生效: " + bad.join("、"));
+        // 收起下拉
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        fire(document.body);
+        await sleep(1200);
+        return names;
+      }
+
       const results = {};
       for (const ch of channels) {
         const res = {};
@@ -834,6 +897,9 @@ const BaseDataSync = (() => {
         try {
           const switched = await setChannel(ch);
           step("Channel: " + ch + (switched ? "（已切换）" : "（当前）"));
+          await sleep(1500);
+          const picked = await selectMerchants(brand);
+          step("已筛选 EH 商户: " + picked.join("、"));
           await sleep(1500); // 等列表按新 Channel 刷新，导出范围才是这个 Channel
 
           // Export → Records matching your search → OK

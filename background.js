@@ -204,7 +204,7 @@ async function runMatchJob(brand, shops) {
       const res = await withBackgroundTab(
         BaseDataSync.EH_PRICING_URL,
         "EH",
-        (tabId) => runStep(tabId, BaseDataSync.fetchEhExportLinks, [chans], "导出 EH 全量成本"),
+        (tabId) => runStep(tabId, BaseDataSync.fetchEhExportLinks, [chans, brand], "导出 EH 成本"),
         { foreground: true }
       );
       // 导出文件由后台取回并解析：成本优先取 Cost(Active)，没有再取 Base Cost(Active)
