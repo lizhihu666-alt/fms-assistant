@@ -508,8 +508,13 @@ const BaseDataSync = (() => {
           "每页1000条选项"
         );
         option.click();
-        await waitFor(() => window[capKey].some((c) => isList(c) && bodyOf(c).size === 1000), "切换每页条数后的加载", 40000);
-        await sleep(500);
+        // 页面不一定会因为切换条数重新查询（例如当前结果很少），等不到就继续，后面点「查询」会自己发请求
+        try {
+          await waitFor(() => window[capKey].some((c) => isList(c) && bodyOf(c).size === 1000), "切换每页条数后的加载", 8000);
+        } catch (e) {
+          step("切换每页条数后页面没有重新加载，继续");
+        }
+        await sleep(800);
       }
 
       // 2. 选品牌、店铺，查询
@@ -530,7 +535,16 @@ const BaseDataSync = (() => {
       let records = [];
       let total = 0;
       for (let page = 1; ; page++) {
-        const hit = await waitFor(() => window[capKey].filter((c) => isMine(c, page)).pop(), "基础数据第" + page + "页", 40000);
+        let hit;
+        try {
+          hit = await waitFor(() => window[capKey].filter((c) => isMine(c, page)).pop(), "基础数据第" + page + "页", page === 1 ? 15000 : 40000);
+        } catch (e) {
+          if (page !== 1) throw e;
+          // 第一次点「查询」可能被页面忽略（页面还在处理上一次加载），再点一次
+          step("第一次查询没有响应，再点一次");
+          queryBtn.click();
+          hit = await waitFor(() => window[capKey].filter((c) => isMine(c, page)).pop(), "基础数据第" + page + "页", 40000);
+        }
         const json = JSON.parse(hit.text);
         if (!json.success || !json.data || !Array.isArray(json.data.records)) throw new Error("基础数据接口返回异常: " + (json.responseDesc || ""));
         records = records.concat(json.data.records);
