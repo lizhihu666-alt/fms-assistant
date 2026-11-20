@@ -1206,6 +1206,7 @@
   const matchBrand = document.getElementById("matchBrand");
   const matchShops = document.getElementById("matchShops");
   const matchBtn = document.getElementById("matchBtn");
+  const matchResolveBtn = document.getElementById("matchResolveBtn");
   const matchStatus = document.getElementById("matchStatus");
   const matchStats = document.getElementById("matchStats");
   const matchUnresolved = document.getElementById("matchUnresolved");
@@ -1236,7 +1237,13 @@
   const selectedMatchShops = () => [...matchShops.querySelectorAll("input:checked")].map((i) => i.value);
   function updateMatchBtn() {
     matchBtn.disabled = matchRunning || !matchBrand.value || !selectedMatchShops().length;
-    matchBtn.textContent = matchRunning ? "后台匹配中…（可以去看别的标签页）" : "全量匹配";
+    matchBtn.textContent = matchRunning ? "后台处理中…（可以去看别的标签页）" : "① 查询 FMS 缺失 SKU";
+    // 第二步用的是第一步查出来的品牌，和下拉框当前选的无关
+    const stage = lastMatchJob && lastMatchJob.stage;
+    const queried = lastMatchJob && lastMatchJob.fms;
+    matchResolveBtn.hidden = !stage || !queried;
+    matchResolveBtn.disabled = matchRunning;
+    matchResolveBtn.textContent = "② 去 EH 匹配" + (queried ? "（" + queried.brand + "）" : "");
   }
   matchBrand.addEventListener("change", updateMatchBtn);
   matchShops.addEventListener("change", updateMatchBtn);
@@ -1264,8 +1271,8 @@
     if (st) {
       matchStats.innerHTML =
         '<div class="stat-tile"><span class="stat-num">' + st.skus + '</span><span class="stat-label">缺价 SKU</span></div>' +
-        '<div class="stat-tile ok"><span class="stat-num">' + st.matched + '</span><span class="stat-label">EH 能补</span></div>' +
-        '<div class="stat-tile ' + (st.unresolved ? "overdue" : "") + '"><span class="stat-num">' + st.unresolved + '</span><span class="stat-label">补不上</span></div>';
+        '<div class="stat-tile ok"><span class="stat-num">' + (st.matched == null ? "–" : st.matched) + '</span><span class="stat-label">EH 能补</span></div>' +
+        '<div class="stat-tile ' + (st.unresolved ? "overdue" : "") + '"><span class="stat-num">' + (st.unresolved == null ? "–" : st.unresolved) + '</span><span class="stat-label">补不上</span></div>';
     }
     const skipped = st && st.skipped ? Object.entries(st.skipped) : [];
     const extra = [];
@@ -1303,6 +1310,24 @@
     let res;
     try {
       res = await chrome.runtime.sendMessage({ type: "match:start", brand, shops });
+    } catch (e) {
+      res = null;
+    }
+    if (!res || !res.started) {
+      matchRunning = false;
+      updateMatchBtn();
+      matchStatus.hidden = false;
+      matchStatus.className = "status error";
+      matchStatus.textContent = (res && res.reason) || "后台服务没有响应。请在浏览器的扩展管理页刷新本插件，再重试。";
+    }
+  });
+
+  matchResolveBtn.addEventListener("click", async () => {
+    matchRunning = true;
+    updateMatchBtn();
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({ type: "match:resolve" });
     } catch (e) {
       res = null;
     }
