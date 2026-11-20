@@ -1226,16 +1226,19 @@
   let matchDownloadKey = "";
   let matchImporting = false;
   let lastMatchJob = null;
+  let matchSaved = null; // 上次选的品牌和店铺（存在 matchForm），下次打开自动带出来
 
   // 只有这几个店铺在 EH 里有对应的 Channel（见 FMSBaseData.SHOP_TO_CHANNEL）
   const matchShopList = () => BillGen.SHOPS.filter((s) => FMSBaseData.channelOf(s));
   function renderMatchForm() {
     const cur = matchBrand.value;
     matchBrand.innerHTML = '<option value="">请选择品牌</option>' + brandList.map((b) => '<option value="' + escHtml(b) + '">' + escHtml(b) + "</option>").join("");
-    if (cur && brandList.includes(cur)) matchBrand.value = cur;
+    const want = cur || (matchSaved && matchSaved.brand) || "";
+    if (want && brandList.includes(want)) matchBrand.value = want;
     if (!matchShops.children.length) {
+      const savedShops = matchSaved && Array.isArray(matchSaved.shops) ? matchSaved.shops : null;
       matchShops.innerHTML = matchShopList()
-        .map((s) => '<label class="brand-check"><input type="checkbox" value="' + escHtml(s) + '" checked><span>' + escHtml(s) + "</span></label>")
+        .map((s) => '<label class="brand-check"><input type="checkbox" value="' + escHtml(s) + '"' + (!savedShops || savedShops.includes(s) ? " checked" : "") + "><span>" + escHtml(s) + "</span></label>")
         .join("");
     }
     updateMatchBtn();
@@ -1255,8 +1258,18 @@
     matchResolveBtn.disabled = matchRunning;
     matchResolveBtn.textContent = "② 去 EH 匹配" + (queried ? "（" + queried.brand + "）" : "");
   }
-  matchBrand.addEventListener("change", updateMatchBtn);
-  matchShops.addEventListener("change", updateMatchBtn);
+  function saveMatchForm() {
+    matchSaved = { brand: matchBrand.value, shops: selectedMatchShops() };
+    chrome.storage.local.set({ matchForm: matchSaved });
+  }
+  matchBrand.addEventListener("change", () => {
+    saveMatchForm();
+    updateMatchBtn();
+  });
+  matchShops.addEventListener("change", () => {
+    saveMatchForm();
+    updateMatchBtn();
+  });
 
   function setMatchImportStatus(text, kind) {
     matchImportStatus.hidden = !text;
@@ -1419,7 +1432,10 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.matchJob) renderMatchJob(changes.matchJob.newValue);
   });
-  chrome.storage.local.get("matchJob", (r) => {
+  chrome.storage.local.get(["matchJob", "matchForm"], (r) => {
+    // 没存过选择时，用上一次任务的品牌和店铺
+    matchSaved = r.matchForm || (r.matchJob && r.matchJob.brand ? { brand: r.matchJob.brand, shops: r.matchJob.shops } : null);
+    matchShops.innerHTML = ""; // 按存下的选择重建店铺勾选
     renderMatchForm();
     renderMatchJob(r.matchJob);
   });
