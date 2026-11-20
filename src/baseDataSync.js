@@ -878,49 +878,76 @@ const BaseDataSync = (() => {
         };
         const sel = await merchantSel();
         await ensureOpen(sel);
+        if (!exactSet.size) await searchIn(sel, brandName);
         let matches = optEls().filter(isMatch);
         if (!matches.length) {
-          const input = sel.querySelector("input");
-          if (input) {
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, (exact && exact[0]) || brandName);
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-            await sleep(1000);
-            matches = optEls().filter(isMatch);
-          }
+          await searchIn(sel, (exact && exact[0]) || brandName);
+          matches = optEls().filter(isMatch);
         }
         if (!matches.length) throw new Error("EH 的 Merchant 里找不到" + (exactSet.size ? "商户 " + exact.join("、") : "名字含「" + brandName + "」的商户"));
-        const names = [...new Set(matches.map((o) => o.textContent.trim()))];
+        let names = [...new Set(matches.map((o) => o.textContent.trim()))];
+        if (exactSet.size && names.length < exactSet.size) {
+          for (const nm of exact) {
+            if (names.some((x) => normName(x) === normName(nm))) continue;
+            await searchIn(sel, nm);
+            const hit = optEls().find((o) => normName(o.textContent) === normName(nm));
+            if (hit) names.push(hit.textContent.trim());
+          }
+        }
         await closeDropdown();
         return names;
       }
 
-      // 只选这一个商户：没选上就点，选着别的就取消，最后重新打开下拉核对
+      // 在下拉的搜索框里输入名字：下拉是虚拟列表，只渲染看得见的几项，不搜就找不到排在后面的商户
+      async function searchIn(sel, text) {
+        const input = sel.querySelector("input");
+        if (!input) return;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, text);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await sleep(900);
+      }
+      // 筛选框里当前选中的商户（多选时是一个个标签，单选时是一个选中项；「+N」表示还有折叠的）
+      const tagEls = (sel) => [...sel.querySelectorAll(".ant-select-selection-item")].filter(vis);
+      const isRest = (e) => /^\+\s*\d+/.test(e.textContent.trim());
+      const selectedNames = (sel) => tagEls(sel).filter((e) => !isRest(e)).map((e) => (e.getAttribute("title") || e.textContent).trim()).filter(Boolean);
+      const hasRest = (sel) => tagEls(sel).some(isRest);
+
+      // 只选这一个商户：先去掉别的标签，再搜出这个商户点上，最后看筛选框里是否只剩它
       async function selectOnly(name) {
         const sel = await merchantSel();
-        for (let attempt = 0; attempt < 5; attempt++) {
-          await ensureOpen(sel);
-          const o = optByName(name);
-          if (!o) throw new Error("Merchant 下拉里没有 " + name);
-          if (!isSel(o)) {
-            window[capKey].length = 0;
-            o.click();
+        window[capKey].length = 0;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const cur = selectedNames(sel);
+          if (cur.length === 1 && cur[0] === name && !hasRest(sel)) break;
+          // 多选：点标签上的 × 去掉别的商户
+          const other = tagEls(sel).find((e) => !isRest(e) && (e.getAttribute("title") || e.textContent).trim() !== name);
+          const rm = other && other.querySelector(".ant-select-selection-item-remove");
+          if (rm) {
+            fire(rm);
             await sleep(1500);
             continue;
           }
-          const extra = optEls().find((e) => isSel(e) && e.textContent.trim() !== name);
-          if (!extra) break;
-          extra.click();
+          if (cur.includes(name) && !hasRest(sel)) break;
+          // 选上这个商户（单选时会直接替换掉原来的）
+          await ensureOpen(sel);
+          let o = optByName(name);
+          if (!o) {
+            await searchIn(sel, name);
+            o = optByName(name);
+          }
+          if (!o) throw new Error("Merchant 下拉里搜不到 " + name);
+          if (!isSel(o)) o.click();
           await sleep(1500);
+          await closeDropdown();
         }
-        await ensureOpen(sel);
-        const o = optByName(name);
-        const extras = optEls().filter((e) => isSel(e) && e.textContent.trim() !== name).map((e) => e.textContent.trim());
-        // 辅助信号：页面发出过恰好带 1 个商户的列表请求（下拉样式认不出时靠它）
+        const cur = selectedNames(sel);
+        // 辅助信号：页面发出过恰好带 1 个商户的列表请求
         const reqOk = window[capKey].some((c) => /pricing\/selling\/list/.test(c.url) && idsOf(c).length === 1);
-        if ((!o || !isSel(o) || extras.length) && !reqOk) {
-          throw new Error("Merchant 选择未生效（应只选 " + name + "；" + (!o || !isSel(o) ? "没选上" : "") + (extras.length ? "多选了：" + extras.join("、") : "") + "）");
+        const ok = cur.length === 1 && cur[0] === name && !hasRest(sel);
+        if (!ok && !(reqOk && cur.includes(name))) {
+          throw new Error("Merchant 选择未生效（应只选 " + name + "，筛选框里现在是：" + (cur.join("、") || "空") + (hasRest(sel) ? " 等" : "") + "）");
         }
-        await closeDropdown();
+        if (optEls().length) await closeDropdown();
       }
 
       // ---- 导出当前筛选结果，返回下载地址 ----
