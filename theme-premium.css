@@ -207,3 +207,4 @@ button.stat-tile.active { border-color: var(--blue-500); box-shadow: inset 0 0 0
 .match-links .ghost-link:hover { color: var(--blue-600); }
 .match-links .match-download { font-size: 11.5px; font-weight: 600; color: var(--blue-600); text-decoration: none; }
 .match-links .match-download:hover { text-decoration: underline; }
+.match-links .match-reset:hover { color: var(--red-600); }

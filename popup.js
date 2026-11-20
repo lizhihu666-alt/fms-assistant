@@ -1196,6 +1196,7 @@
   const matchAutoWrap = document.getElementById("matchAutoWrap");
   const matchRequery = document.getElementById("matchRequery");
   const matchRematch = document.getElementById("matchRematch");
+  const matchReset = document.getElementById("matchReset");
   const matchSteps = document.getElementById("matchSteps");
   const matchStatus = document.getElementById("matchStatus");
   const matchContext = document.getElementById("matchContext");
@@ -1283,6 +1284,7 @@
     matchAutoWrap.hidden = !(matchAction === "query" && !onResult);
     matchRequery.hidden = !(idle && onResult && matchAction !== "query");
     matchRematch.hidden = !(idle && onResult && s.stage === "matched");
+    matchReset.hidden = !(idle && lastMatchJob && lastMatchJob.text); // 有进度时才能重置
 
     // 顶部三步进度
     const step = (n, done, active) => {
@@ -1525,6 +1527,16 @@
   });
   matchRequery.addEventListener("click", startQuery);
   matchRematch.addEventListener("click", () => startMatch("match:resolve"));
+  // 重置：只清插件里这一页的进度和结果，FMS / EH 里的数据不受影响；品牌和店铺的选择保留
+  matchReset.addEventListener("click", async () => {
+    if (matchRunning || matchImporting) return;
+    if (!confirm("清空这一页的进度和结果，回到第一步？\n（只清插件里的记录，不影响 FMS / EH 里的数据）")) return;
+    matchSearch.value = "";
+    matchBlob = null;
+    matchDownloadKey = "";
+    setMatchImportStatus("");
+    await chrome.storage.local.remove("matchJob"); // 触发 onChanged → 界面回到初始状态
+  });
 
   matchMissingCopy.addEventListener("click", async () => {
     // 复制当前列表里看得见的 SKU（搜过就只复制搜到的）
