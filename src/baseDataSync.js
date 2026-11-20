@@ -740,7 +740,7 @@ const BaseDataSync = (() => {
    * 导出前先在 Merchant 筛选里选中名字和品牌对得上的商户（只导出这个品牌，不导出整个渠道）；
    * 返回 { ok, results: { [channel]: { url, fileName, error? } }, log }；CSV 由后台用该地址取回。
    */
-  async function fetchEhExportLinks(channels, brand) {
+  async function fetchEhExportLinks(channels, brand, exactMerchants) {
     const log = [];
     const step = (m) => log.push(m);
     const restore = [];
@@ -831,9 +831,10 @@ const BaseDataSync = (() => {
       // 在 Merchant 筛选里选中名字含品牌名的商户（EH 的商户名和 FMS 品牌名不完全一样，如 Attraco 对 Attraco-Drop Ship），
       // 取消其它已选的商户，保证「匹配当前搜索」导出的只是这个品牌
       const normName = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-      async function selectMerchants(brandName) {
+      async function selectMerchants(brandName, exact) {
         const want = normName(brandName);
         if (!want) throw new Error("没有品牌名，不能筛选 EH 商户");
+        const exactSet = new Set((exact || []).map(normName));
         const leaf = await waitFor(
           () => [...document.querySelectorAll(".ant-select *")].find((e) => vis(e) && e.children.length === 0 && /^Merchant$/.test(e.textContent.trim())),
           "Merchant 筛选",
@@ -841,9 +842,11 @@ const BaseDataSync = (() => {
         );
         const sel = leaf.closest(".ant-select");
         const optEls = () => [...document.querySelectorAll(".ant-select-item-option")].filter(vis);
+        // 有指定对应关系就按名字精确匹配，没有就按「商户名包含品牌名」
         const isMatch = (o) => {
           const n = normName(o.textContent);
-          return n && (n.includes(want) || want.includes(n));
+          if (!n) return false;
+          return exactSet.size ? exactSet.has(n) : n.includes(want);
         };
         fire(sel.querySelector(".ant-select-selector") || sel);
         await sleep(800);
@@ -853,13 +856,13 @@ const BaseDataSync = (() => {
           // 下拉里没有就在搜索框里输入品牌名再找一次
           const input = sel.querySelector("input");
           if (input) {
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, brandName);
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, (exact && exact[0]) || brandName);
             input.dispatchEvent(new Event("input", { bubbles: true }));
             await sleep(1000);
             matches = optEls().filter(isMatch);
           }
         }
-        if (!matches.length) throw new Error("EH 的 Merchant 里找不到名字含「" + brandName + "」的商户");
+        if (!matches.length) throw new Error("EH 的 Merchant 里找不到" + (exactSet.size ? "商户 " + exact.join("、") : "名字含「" + brandName + "」的商户"));
         const names = matches.map((o) => o.textContent.trim());
         // 先选中匹配的（每次重新找，避免点击后节点被重绘）
         for (const nm of names) {
@@ -898,7 +901,7 @@ const BaseDataSync = (() => {
           const switched = await setChannel(ch);
           step("Channel: " + ch + (switched ? "（已切换）" : "（当前）"));
           await sleep(1500);
-          const picked = await selectMerchants(brand);
+          const picked = await selectMerchants(brand, exactMerchants);
           step("已筛选 EH 商户: " + picked.join("、"));
           await sleep(1500); // 等列表按新 Channel 刷新，导出范围才是这个 Channel
 

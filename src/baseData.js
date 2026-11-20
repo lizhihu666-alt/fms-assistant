@@ -21,6 +21,21 @@ const FMSBaseData = (() => {
 
   const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+  // FMS 品牌名 → EH 里对应的商户名（精确匹配）。没列在这里的品牌，按「EH 商户名包含品牌名」处理
+  // （如 TIJN 会匹配 TIJN-consignment 和 TIJN-drop ship，Pretty Garden 会匹配 Pretty Garden US）
+  const EH_MERCHANTS = {
+    attraco: ["Attraco-Drop Ship", "Attraco"],
+    vforcity: ["Attraco-Drop Ship", "Attraco"],
+    attracob: ["Attraco-Drop Ship", "Attraco"],
+    charmo: ["Attraco-Drop Ship", "Attraco"],
+    ecosusi: ["BAGSMART"],
+  };
+
+  /** 返回 EH 商户名的精确列表；没有特殊对应时返回 []（调用方按名字包含品牌名处理） */
+  function ehMerchantsOf(brand) {
+    return (EH_MERCHANTS[norm(brand)] || []).slice();
+  }
+
   function channelOf(shop) {
     return SHOP_TO_CHANNEL[norm(shop)] || "";
   }
@@ -247,7 +262,7 @@ const FMSBaseData = (() => {
     return { skus, count: Object.keys(skus).length, noCost };
   }
 
-  return { SHOP_TO_CHANNEL, SHEET_NAME, HEADERS, channelOf, planMissing, planFromFmsRows, resolve, checkRows, toWorkbook, fileName, matchFileName, parseCsv, parseEhPricingCsv };
+  return { SHOP_TO_CHANNEL, SHEET_NAME, HEADERS, channelOf, ehMerchantsOf, planMissing, planFromFmsRows, resolve, checkRows, toWorkbook, fileName, matchFileName, parseCsv, parseEhPricingCsv };
 })();
 
 if (typeof module !== "undefined") module.exports = FMSBaseData;
