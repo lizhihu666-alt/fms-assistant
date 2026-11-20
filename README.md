@@ -4,7 +4,7 @@ Chrome / Edge 浏览器扩展（Manifest V3），在侧边栏里把 FMS「品牌
 
 > 内部工具，仅限公司内部使用，请勿外传。作者：Leo Hu
 >
-> **接手开发先读 [`docs/HANDOFF.md`](docs/HANDOFF.md)**：业务规则、架构、每个「为什么这样写」和踩过的坑都在那里。
+> **接手开发先读 [`docs/HANDOFF.md`](docs/HANDOFF.md)**，整体架构图见 [`docs/architecture.html`](docs/architecture.html)（下载后用浏览器打开）：业务规则、架构、每个「为什么这样写」和踩过的坑都在那里。
 
 ## 功能
 

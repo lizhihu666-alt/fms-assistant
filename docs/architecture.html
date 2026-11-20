@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>FMS付款助手架构</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* 布局：左「你在侧边栏操作」→ 中「后台内核」→ 右「插件替你点的网站」，下方两条业务流水线 */
+:root {
+  --bg: #f3f5f9;
+  --panel: #ffffff;
+  --line: #c9d1de;
+  --ink: #18212f;
+  --ink-2: #4a5568;
+  --ink-3: #7b8597;
+  --accent: #1f4fd6;
+  --accent-soft: #e6edfd;
+  --core: #121a2b;
+  --core-row: #1c2740;
+  --core-ink: #e8edf7;
+  --core-ink-2: #9aa7bf;
+  --tag: #f5b942;
+  --ok: #1f8a4c;
+  --ok-soft: #e7f5ec;
+  --warn-soft: #fff4e2;
+  --warn-ink: #8a4b00;
+  --font: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e131d; --panel: #161d2a; --line: #334055; --ink: #e8edf6; --ink-2: #b4bfd1; --ink-3: #8592a8;
+  --accent: #7ea2ff; --accent-soft: #1d2a4a; --core: #05080f; --core-row: #121b2e; --core-ink: #e8edf7; --core-ink-2: #8f9cb5;
+  --tag: #f5b942; --ok: #4cc283; --ok-soft: #14301f; --warn-soft: #3a2a10; --warn-ink: #f3c27a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e131d; --panel: #161d2a; --line: #334055; --ink: #e8edf6; --ink-2: #b4bfd1; --ink-3: #8592a8;
+  --accent: #7ea2ff; --accent-soft: #1d2a4a; --core: #05080f; --core-row: #121b2e; --core-ink: #e8edf7; --core-ink-2: #8f9cb5;
+  --tag: #f5b942; --ok: #4cc283; --ok-soft: #14301f; --warn-soft: #3a2a10; --warn-ink: #f3c27a; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font); line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 48px; }
+.wrap { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+h1 { margin: 0; font-size: 26px; font-weight: 900; letter-spacing: -0.3px; text-wrap: balance; }
+.lead { margin: 6px 0 0; color: var(--ink-2); font-size: 14.5px; max-width: 62ch; }
+.stage { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; overflow-x: auto; }
+
+/* 主图：三列 + 两条连接带 */
+.arch { display: grid; grid-template-columns: minmax(170px, 1fr) 92px minmax(320px, 1.7fr) 92px minmax(170px, 1fr); align-items: center; min-width: 900px; }
+.group { border: 1.5px dashed var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.group h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.group .sub { margin: -4px 0 4px; font-size: 12px; color: var(--ink-3); }
+.chip { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font-size: 13px; }
+.chip b { display: block; font-weight: 600; }
+.chip small { display: block; color: var(--ink-3); font-size: 11.5px; line-height: 1.4; }
+.chip.dim { color: var(--ink-3); border-style: dashed; }
+
+.core { background: var(--core); color: var(--core-ink); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 0 0 2px var(--accent); }
+.core-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.core-head h2 { margin: 0; font-size: 20px; font-weight: 900; }
+.core-head span { font-size: 11.5px; color: var(--core-ink-2); }
+.core-file { font-family: var(--mono); font-size: 11px; color: var(--core-ink-2); }
+.dispatch { background: var(--core-row); border-radius: 10px; padding: 10px 12px; text-align: center; }
+.dispatch b { display: block; font-size: 14px; }
+.dispatch small { color: var(--core-ink-2); font-size: 11.5px; }
+.rule { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; background: var(--core-row); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; }
+.rule em { font-style: normal; font-weight: 700; font-size: 12px; color: var(--core); background: var(--tag); border-radius: 6px; padding: 3px 0; text-align: center; }
+
+/* 连接带：编号 + 箭头 + 说明 */
+.link { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.hop { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11.5px; color: var(--accent); font-weight: 600; text-align: center; line-height: 1.3; }
+.num { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--panel); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.arrow { width: 70px; height: 10px; }
+.arrow line { stroke: var(--accent); stroke-width: 2; }
+.arrow path { fill: var(--accent); }
+.arrow.back { transform: scaleX(-1); }
+
+.under { display: grid; grid-template-columns: minmax(170px, 1fr) 92px minmax(320px, 1.7fr) 92px minmax(170px, 1fr); min-width: 900px; margin-top: 14px; }
+.store { grid-column: 3; border: 1.5px dashed var(--line); border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); }
+.store b { color: var(--ink); }
+.key { font-family: var(--mono); font-size: 11px; background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 2px 6px; }
+
+/* 流水线 */
+.pipe { border: 1.5px dashed var(--line); border-radius: 14px; padding: 14px 16px; display: grid; grid-template-columns: 170px 1fr; gap: 14px; align-items: center; }
+.pipe-name h3 { margin: 0; font-size: 15px; }
+.pipe-name small { color: var(--ink-3); font-size: 12px; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
+.step { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; min-width: 0; flex: 1 1 120px; display: flex; flex-direction: column; gap: 2px; }
+.step b { font-size: 13px; }
+.step small { color: var(--ink-3); font-size: 11.5px; line-height: 1.4; }
+.step .n { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+/* 每一步左上角带类型标签：只读 / 改 FMS 数据 / 需你确认 */
+.step::before { content: "只读"; align-self: flex-start; margin-bottom: 4px; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 700; color: var(--ink-3); background: var(--panel); border: 1px solid var(--line); }
+.step.write { border: 2px solid var(--accent); background: var(--accent-soft); }
+.step.write::before { content: "改 FMS 数据"; color: var(--panel); background: var(--accent); border-color: var(--accent); }
+.step.human { border: 2px solid var(--ok); background: var(--ok-soft); }
+.step.human::before { content: "需你确认"; color: var(--panel); background: var(--ok); border-color: var(--ok); }
+.step.human .n { color: var(--ok); }
+.sep { align-self: center; color: var(--ink-3); font-size: 14px; }
+
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 10px 14px; font-size: 13px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.legend > b { color: var(--ink); font-size: 13px; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { padding: 1px 8px; border-radius: 99px; font-size: 11.5px; font-weight: 700; font-style: normal; color: var(--ink-3); background: var(--bg); border: 1px solid var(--line); }
+.sw.write { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+.sw.human { color: var(--panel); background: var(--ok); border-color: var(--ok); }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.note { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--ink-2); }
+.note h4 { margin: 0 0 4px; font-size: 13.5px; color: var(--ink); }
+.note.warn { background: var(--warn-soft); border-color: transparent; color: var(--warn-ink); }
+.note.warn h4 { color: var(--warn-ink); }
+code { font-family: var(--mono); font-size: 11.5px; }
+
+@media (max-width: 720px) {
+  .pipe { grid-template-columns: 1fr; }
+  .sep { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .num { transition: transform .2s; }
+  .hop:hover .num { transform: scale(1.12); }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>FMS付款助手 · 整体架构</h1>
+    <p class="lead">你在侧边栏里点一下，后台就打开 FMS / EH 页面，像人一样替你点按钮、读结果；会改数据的步骤都停下来等你确认，请款只存草稿不提交。</p>
+  </header>
+
+  <section class="stage" aria-label="架构图">
+    <div class="arch">
+      <!-- 左：侧边栏 -->
+      <div class="group">
+        <h3>侧边栏</h3>
+        <p class="sub">你在这里操作 · <code>popup.js</code></p>
+        <div class="chip"><b>请款流程</b><small>6 步：生成 → 补数据 → 重新生成 → 清洗对账 → 请款</small></div>
+        <div class="chip"><b>基础数据</b><small>按品牌补结算价：查缺价 → EH 匹配 → 导入</small></div>
+        <div class="chip"><b>付款进度</b><small>概况 + 待办；完整跟踪表 <code>dashboard.html</code></small></div>
+        <div class="chip dim"><b>Loop 自动化</b><small>可选，默认关闭 · <code>options.html</code></small></div>
+      </div>
+
+      <!-- 连接：侧边栏 ↔ 后台 -->
+      <div class="link">
+        <div class="hop"><span class="num">1</span>
+          <svg class="arrow" viewBox="0 0 70 10" aria-hidden="true"><line x1="0" y1="5" x2="62" y2="5"/><path d="M70 5 62 0v10z"/></svg>
+          发起任务</div>
+        <div class="hop">
+          <svg class="arrow back" viewBox="0 0 70 10" aria-hidden="true"><line x1="0" y1="5" x2="62" y2="5"/><path d="M70 5 62 0v10z"/></svg>
+          <span class="num">4</span>进度和结果</div>
+      </div>
+
+      <!-- 中：后台内核 -->
+      <div class="core">
+        <div class="core-head"><h2>后台服务</h2><span>不碰登录凭据 · 只到草稿</span></div>
+        <div class="core-file">background.js · src/pageRun.js · src/config.js</div>
+        <div class="dispatch"><b>按任务打开对应页面，注入一段脚本去操作</b><small>生成账单 / 重新生成 / 补数据 / 全量匹配 / 导入 / 读进度</small></div>
+        <div class="rule"><em>关侧边栏不中断</em><span>长任务在后台跑，进度写进本地存储，重开侧边栏接着看</span></div>
+        <div class="rule"><em>前台临时标签页</em><span>下拉和弹窗靠动画，后台标签页会被浏览器暂停，所以写操作开在前台，跑完自动关</span></div>
+        <div class="rule"><em>只旁听不调用</em><span>不拿 token 自己调接口，只点页面按钮、截取页面自己请求的返回</span></div>
+        <div class="rule"><em>写入前把关</em><span>重复行、缺 Brand SKU、同款价差过大都会停下；导入前先下载核对</span></div>
+      </div>
+
+      <!-- 连接：后台 ↔ 网站 -->
+      <div class="link">
+        <div class="hop"><span class="num">2</span>
+          <svg class="arrow" viewBox="0 0 70 10" aria-hidden="true"><line x1="0" y1="5" x2="62" y2="5"/><path d="M70 5 62 0v10z"/></svg>
+          注入脚本<br>代你点击</div>
+        <div class="hop">
+          <svg class="arrow back" viewBox="0 0 70 10" aria-hidden="true"><line x1="0" y1="5" x2="62" y2="5"/><path d="M70 5 62 0v10z"/></svg>
+          <span class="num">3</span>截取页面<br>自己的返回</div>
+      </div>
+
+      <!-- 右：网站 -->
+      <div class="group">
+        <h3>网站</h3>
+        <p class="sub">插件替你点的页面</p>
+        <div class="chip"><b>FMS 品牌商账单</b><small>生成 / 重新生成 / 明细 / 下载 / 请款</small></div>
+        <div class="chip"><b>FMS 基础数据</b><small>查缺结算价的 SKU · 导入模板</small></div>
+        <div class="chip"><b>FMS 费控单</b><small>上传发票，存草稿</small></div>
+        <div class="chip"><b>EH Pricing</b><small>选 Channel、Merchant → 导出成本 CSV</small></div>
+      </div>
+    </div>
+
+    <div class="under">
+      <div class="store">
+        <b>本地存储</b>
+        <span class="key">billFillJob</span><span class="key">matchJob</span><span class="key">genJob</span><span class="key">regenJob</span><span class="key">fmsSnapshot</span>
+        <span>侧边栏只读这里显示进度</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="legend" aria-label="步骤类型">
+    <b>每一步的类型</b>
+    <span><i class="sw">只读</i>只读页面，不改任何数据</span>
+    <span><i class="sw write">改 FMS 数据</i>会写入 FMS，执行前弹窗确认</span>
+    <span><i class="sw human">需你确认</i>停下来等你看过再继续</span>
+  </div>
+
+  <section class="pipe" aria-label="请款流水线">
+    <div class="pipe-name"><h3>请款流水线</h3><small>按账单状态自动分叉</small></div>
+    <div class="steps">
+      <div class="step write"><span class="n">1</span><b>生成账单</b><small>按品牌或 Vendor，月份可多选</small></div>
+      <span class="sep">→</span>
+      <div class="step"><span class="n">2</span><b>状态验证</b><small>读账单状态，决定走哪条路</small></div>
+      <span class="sep">→</span>
+      <div class="step write"><span class="n">3</span><b>补充数据</b><small>待确认时：缺价 SKU → EH 查成本 → 导入</small></div>
+      <span class="sep">→</span>
+      <div class="step write"><span class="n">4</span><b>重新生成</b><small>等状态变成待生成请款单</small></div>
+      <span class="sep">→</span>
+      <div class="step"><span class="n">5</span><b>清洗对账表</b><small>中文 + English；同 Vendor 合并</small></div>
+      <span class="sep">→</span>
+      <div class="step human"><span class="n">6</span><b>上传发票请款</b><small>只存草稿，由你提交</small></div>
+    </div>
+  </section>
+
+  <section class="pipe" aria-label="补结算价流水线">
+    <div class="pipe-name"><h3>补结算价</h3><small>基础数据页 · 可分步也可连做</small></div>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><b>查缺价</b><small>FMS 基础数据里结算价为空的 SKU，结果保存</small></div>
+      <span class="sep">→</span>
+      <div class="step"><span class="n">2</span><b>选 EH 商户</b><small>按品牌对应表，一个商户导一次</small></div>
+      <span class="sep">→</span>
+      <div class="step"><span class="n">3</span><b>导出并匹配</b><small>取 Cost(Active)，没有再取 Base Cost(Active)</small></div>
+      <span class="sep">→</span>
+      <div class="step human"><span class="n">4</span><b>下载核对</b><small>能补 / 补不上 分类列出</small></div>
+      <span class="sep">→</span>
+      <div class="step write"><span class="n">5</span><b>导入</b><small>只补空的，已有价格不动</small></div>
+    </div>
+  </section>
+</div>
+
+</body>
+</html>
