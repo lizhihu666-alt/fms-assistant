@@ -1215,6 +1215,8 @@
   const matchMissingCopy = document.getElementById("matchMissingCopy");
   let matchMissingSkus = [];
   let matchMissingKey = "";
+  let matchView = "missing"; // 下面列表当前显示哪一类：missing / matched / unresolved
+  let matchViewKey = "";
   const matchUnresolved = document.getElementById("matchUnresolved");
   const matchDownload = document.getElementById("matchDownload");
   const matchDownloadText = document.getElementById("matchDownloadText");
@@ -1277,6 +1279,65 @@
     matchImportStatus.className = "status" + (kind ? " " + kind : "");
   }
 
+  // 下面的列表：按当前视图列出 SKU。组头写一次（店铺 / 站点，或补不上的原因），行里只放 SKU（能补的再带上价格）
+  function renderMatchList(job) {
+    const groups = new Map();
+    const skus = [];
+    const add = (g, html, sku) => {
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(html);
+      skus.push(sku);
+    };
+    const where = (shop, site) => (shop || "") + " / " + (site || "");
+    let title = "";
+    if (matchView === "matched") {
+      title = "EH 能补";
+      for (const r of job.rows || []) {
+        const price = Number(r["结算单价"]);
+        add(
+          where(r["店铺"], r["站点"]),
+          '<div class="missing-sku"><span>' + escHtml(r["MM SKU"]) + '</span><span class="sku-price">' + escHtml((isFinite(price) ? price.toFixed(2) : r["结算单价"]) + " " + (r["结算币种"] || "")) + "</span></div>",
+          r["MM SKU"]
+        );
+      }
+    } else if (matchView === "unresolved") {
+      title = "补不上";
+      const list = job.unresolvedList || [];
+      const multiShop = new Set(list.map((u) => where(u.shop, u.site))).size > 1;
+      for (const u of list) {
+        add(u.reason + (multiShop ? " · " + where(u.shop, u.site) : ""), '<div class="missing-sku"><span>' + escHtml(u.sku) + "</span></div>", u.sku);
+      }
+    } else {
+      title = "缺价 SKU";
+      const seen = new Set();
+      for (const r of (job.fms && job.fms.missing) || []) {
+        const k = [r.siteCode, r.shopCode, r.sku].join("|");
+        if (seen.has(k)) continue;
+        seen.add(k);
+        add(where(r.shopCode, r.siteCode), '<div class="missing-sku"><span>' + escHtml(r.sku) + "</span></div>", r.sku);
+      }
+    }
+    matchMissing.hidden = !skus.length;
+    if (!skus.length) return;
+    matchMissingSkus = [...new Set(skus)];
+    matchMissingSummary.textContent = title + " · " + skus.length + " 个";
+    matchMissingList.innerHTML = [...groups]
+      .map(([g, rows]) => '<div class="missing-group-head"><span>' + escHtml(g) + "</span><span>" + rows.length + "</span></div>" + rows.join(""))
+      .join("");
+    const key = matchView + ":" + matchViewKey;
+    if (key !== matchMissingKey) {
+      matchMissingKey = key;
+      matchMissing.open = true; // 换了视图或有新结果就展开
+      matchMissingList.scrollTop = 0;
+    }
+  }
+  matchStats.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-view]");
+    if (!b || b.disabled) return;
+    matchView = b.dataset.view;
+    renderMatchJob(lastMatchJob);
+  });
+
   async function renderMatchJob(job) {
     lastMatchJob = job || null;
     matchRunning = !!(job && job.running);
@@ -1291,47 +1352,32 @@
 
     const st = job.stats;
     matchStats.hidden = !st;
+    // 新结果出来时选默认视图：第一步看「缺价」，第二步看「能补」（没有能补的就看「补不上」）
+    const viewKey = (job.stage || "") + ":" + (job.startedAt || 0) + ":" + (st ? st.matched : "");
+    if (viewKey !== matchViewKey) {
+      matchViewKey = viewKey;
+      matchView = job.stage === "matched" ? (st && st.matched ? "matched" : "unresolved") : "missing";
+    }
     if (st) {
+      // 三张卡片就是三个切换按钮，点哪个下面就列哪一类
+      const tile = (view, cls, num, label) => {
+        const empty = num == null || num === 0;
+        return (
+          '<button type="button" class="stat-tile ' + cls + (matchView === view && !empty ? " active" : "") + '" data-view="' + view + '"' + (empty ? " disabled" : "") + ">" +
+          '<span class="stat-num">' + (num == null ? "–" : num) + '</span><span class="stat-label">' + label + "</span></button>"
+        );
+      };
       matchStats.innerHTML =
-        '<div class="stat-tile"><span class="stat-num">' + st.skus + '</span><span class="stat-label">缺价 SKU</span></div>' +
-        '<div class="stat-tile ok"><span class="stat-num">' + (st.matched == null ? "–" : st.matched) + '</span><span class="stat-label">EH 能补</span></div>' +
-        '<div class="stat-tile ' + (st.unresolved ? "overdue" : "") + '"><span class="stat-num">' + (st.unresolved == null ? "–" : st.unresolved) + '</span><span class="stat-label">补不上</span></div>';
+        tile("missing", "", st.skus, "缺价 SKU") +
+        tile("matched", "ok", st.matched, "EH 能补") +
+        tile("unresolved", st.unresolved ? "overdue" : "", st.unresolved, "补不上");
     }
-    // 第一步查出来的缺失 SKU：按「店铺 / 站点」分组，组头写一次，下面只列 SKU（按 站点+店铺+SKU 去重）
-    const miss = job.fms && job.fms.missing;
-    matchMissing.hidden = !(miss && miss.length);
-    if (!matchMissing.hidden) {
-      const groups = new Map();
-      const seen = new Set();
-      for (const r of miss) {
-        const k = [r.siteCode, r.shopCode, r.sku].join("|");
-        if (seen.has(k)) continue;
-        seen.add(k);
-        const g = (r.shopCode || "") + " / " + (r.siteCode || "");
-        if (!groups.has(g)) groups.set(g, []);
-        groups.get(g).push(r.sku);
-      }
-      matchMissingSkus = [...new Set([...groups.values()].flat())];
-      const total = seen.size;
-      matchMissingSummary.textContent = "FMS 缺失 SKU · " + total + " 个";
-      matchMissingList.innerHTML = [...groups]
-        .map(
-          ([g, skus]) =>
-            '<div class="missing-group-head"><span>' + escHtml(g) + "</span><span>" + skus.length + "</span></div>" +
-            skus.map((s) => '<div class="missing-sku">' + escHtml(s) + "</div>").join("")
-        )
-        .join("");
-      const key = job.fms.brand + ":" + total + ":" + miss.length;
-      if (key !== matchMissingKey) {
-        matchMissingKey = key;
-        matchMissing.open = true; // 新查出来的先展开，之后用户折叠了就不再自动展开
-      }
-    }
+    renderMatchList(job);
     const skipped = st && st.skipped ? Object.entries(st.skipped) : [];
     const extra = [];
     if (skipped.length) extra.push("没有对应 EH 渠道、已跳过：" + skipped.map(([s, n]) => s + "（" + n + " 个）").join("、"));
     if (job.warnings && job.warnings.length) extra.push("检查提示：" + job.warnings.join("；"));
-    const text = [job.unresolved, ...extra].filter(Boolean).join("\n");
+    const text = [job.unresolvedList ? "" : job.unresolved, ...extra].filter(Boolean).join("\n");
     matchUnresolved.hidden = !text;
     matchUnresolved.textContent = text;
 
@@ -1384,7 +1430,7 @@
     } catch (err) {
       matchMissingCopy.textContent = "复制失败";
     }
-    setTimeout(() => (matchMissingCopy.textContent = "复制全部"), 1800);
+    setTimeout(() => (matchMissingCopy.textContent = "复制 SKU"), 1800);
   });
 
   matchResolveBtn.addEventListener("click", async () => {

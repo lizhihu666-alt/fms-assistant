@@ -155,3 +155,10 @@ body { background: var(--bg); }
 .missing-group-head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; padding: 6px 12px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em; color: var(--ink-700); background: var(--surface-muted); border-bottom: 1px solid var(--line); }
 .missing-sku { padding: 6px 12px; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; color: var(--ink-900); border-bottom: 1px solid var(--line); word-break: break-all; }
 .missing-sku:last-child { border-bottom: none; }
+/* 结果卡片可点：切换下面列出的类别 */
+button.stat-tile { width: 100%; font: inherit; color: inherit; border: 1px solid transparent; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+button.stat-tile:disabled { cursor: default; opacity: 0.75; }
+button.stat-tile:not(:disabled):hover { border-color: var(--blue-100); }
+button.stat-tile.active { border-color: var(--blue-500); box-shadow: inset 0 0 0 1px var(--blue-500); }
+.missing-sku { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.sku-price { flex: none; font-family: inherit; font-weight: 600; color: var(--green-600); }

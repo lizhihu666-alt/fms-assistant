@@ -221,7 +221,7 @@ async function runMatchResolve() {
   const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
   const job0 = (await chrome.storage.local.get(MATCH_KEY))[MATCH_KEY] || {};
   const fms = job0.fms;
-  const clear = { unresolved: "", rows: [], fileName: "", warnings: [] };
+  const clear = { unresolved: "", unresolvedList: [], rows: [], fileName: "", warnings: [] };
   try {
     if (!fms || !fms.missing || !fms.missing.length) {
       await setMatch({ running: false, kind: "error", ...clear, text: "请先做第一步：查询 FMS 缺失 SKU" });
@@ -292,6 +292,7 @@ async function runMatchResolve() {
       stats: { ...baseStats, matched: out.rows.length, unresolved: out.unresolved.length },
       text: out.rows.length ? "已匹配 " + out.rows.length + " 个。请先检查导入文件，没问题再点「一键导入」。" : "没有能补上的 SKU。",
       unresolved: lines.join("\n"),
+      unresolvedList: out.unresolved.map((u) => ({ sku: u.item.sku, shop: u.item.shop, site: u.item.site, reason: u.reason.replace(/（[^）]*）/g, "").replace(/\(.*?\)/g, "") })),
       warnings: check.warnings.slice(0, 10),
       rows: out.rows,
       fileName: out.rows.length ? FMSBaseData.matchFileName(brand) : "",
