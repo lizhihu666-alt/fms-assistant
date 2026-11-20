@@ -29,6 +29,8 @@ const FMSBaseData = (() => {
     attracob: ["Attraco-Drop Ship", "Attraco"],
     charmo: ["Attraco-Drop Ship", "Attraco"],
     ecosusi: ["BAGSMART"],
+    camel: ["Camel"],
+    camelcrown: ["Camel Crown"],
   };
 
   /** 返回 EH 商户名的精确列表；没有特殊对应时返回 []（调用方按名字包含品牌名处理） */
