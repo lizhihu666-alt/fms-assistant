@@ -65,77 +65,8 @@ body {
   color: rgba(255, 255, 255, 0.78);
 }
 
-.app-footer {
-  margin: 10px 0 0;
-  font-size: 10.5px;
-  text-align: center;
-  color: var(--ink-400);
-}
-
 main {
   padding: 14px;
-}
-
-/* ---- progress strip ---- */
-
-.progress-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 44px;
-  margin-bottom: 12px;
-  padding: 0 14px;
-  font-family: inherit;
-  text-align: left;
-  background: var(--surface);
-  border: none;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-  cursor: pointer;
-}
-
-.progress-strip:hover {
-  background: var(--blue-50);
-}
-
-.progress-strip-title {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--ink-700);
-}
-
-.progress-counts {
-  display: flex;
-  flex: 1 1 auto;
-  gap: 8px;
-  min-width: 0;
-  font-size: 11.5px;
-  color: var(--ink-500);
-}
-
-.count-pill {
-  padding: 2px 8px;
-  font-weight: 600;
-  border-radius: 999px;
-}
-
-.count-pill.overdue {
-  background: #c0392b;
-  color: #fff;
-}
-
-.count-pill.warn {
-  background: #fff4e5;
-  color: #8a4b00;
-}
-
-.progress-strip-go {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--blue-600);
 }
 
 /* ---- card shell ---- */
@@ -154,10 +85,6 @@ main {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--ink-400);
-}
-
-.basedata-card {
-  margin-top: 12px;
 }
 
 .card-note {
@@ -231,13 +158,6 @@ main {
   margin-bottom: 10px;
 }
 
-.step-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
 .step-badge {
   display: inline-flex;
   align-items: center;
@@ -250,29 +170,6 @@ main {
   font-weight: 700;
   background: var(--ink-900);
   color: #fff;
-}
-
-.step-title {
-  flex: 1 1 auto;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--ink-700);
-}
-
-.step-done {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--green-600);
-}
-
-.step-connector {
-  margin: 2px 0 14px 10px;
-  padding-left: 12px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--ink-400);
-  border-left: 2px solid var(--line);
 }
 
 /* ---- buttons ---- */
@@ -493,10 +390,6 @@ main {
   margin-top: 12px;
 }
 
-.import-note {
-  margin: 0 0 8px;
-}
-
 .import-own {
   display: block;
   margin: 8px auto 0;
@@ -507,24 +400,10 @@ main {
   color: var(--blue-600);
 }
 
-/* ---- 生成账单 ---- */
-
-.gen-card .field-block {
-  margin-bottom: 12px;
-}
-
-.gen-card select.text-input {
-  padding-right: 8px;
-}
-
 .gen-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-}
-
-.flow-gap {
-  margin-top: 12px;
 }
 
 /* ---- 分步流程 ---- */
@@ -659,28 +538,6 @@ main {
   margin: 8px 0 0 !important;
 }
 
-.mini-steps {
-  margin: 0 0 12px;
-  padding-left: 18px;
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--ink-700);
-}
-
-/* 当前账单 */
-.bill-card {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 12px 14px;
-  background: var(--surface);
-  border-radius: 14px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-}
-
-.bill-card .field-label-row {
-  margin-bottom: 8px;
-}
-
 .bill-row {
   display: flex;
   gap: 8px;
@@ -689,13 +546,6 @@ main {
 .bill-row .text-input {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.btn-sm {
-  flex: 0 0 auto;
-  height: 40px;
-  padding: 0 12px;
-  font-size: 12.5px;
 }
 
 .bill-meta {
@@ -739,85 +589,14 @@ main {
   color: var(--red-600);
 }
 
-/* 分叉提示：只有「待确认」时才需要走 2、3 步 */
-.branch-label {
-  list-style: none;
-  margin: 12px 0 8px;
-  text-align: center;
-  font-size: 11px;
-  color: var(--ink-400);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.branch-label::before,
-.branch-label::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-
 .bill-chip {
   cursor: pointer;
-}
-
-.progress-strip-title {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
 }
 
 .progress-scope {
   font-size: 10.5px;
   font-weight: 500;
   color: var(--ink-400);
-}
-
-.step-bill {
-  padding: 0 14px 14px;
-}
-
-.step-card[data-state="active"] .step-bill,
-.step-card .step-card-body + .step-bill {
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-}
-
-.step-card[data-state="done"] .step-bill {
-  padding-top: 0;
-}
-.step-card[data-state="done"].expanded .step-card-body + .step-bill {
-  padding-top: 12px;
-}
-
-.progress-strip {
-  min-height: 52px;
-  padding-top: 6px;
-  padding-bottom: 6px;
-}
-
-.progress-strip-main {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.progress-strip-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.progress-strip-row .progress-counts {
-  flex: 0 1 auto;
-}
-
-.progress-strip-title {
-  display: block;
 }
 
 /* ---- 折叠提示：已完成/无需的步骤右侧显示下拉箭头，展开后箭头朝上 ---- */
@@ -883,29 +662,6 @@ main {
   background: var(--surface);
   color: var(--blue-600);
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.1);
-}
-
-.tab-badge {
-  min-width: 18px;
-  padding: 0 5px;
-  font-size: 11px;
-  line-height: 18px;
-  text-align: center;
-  color: #fff;
-  background: #c0392b;
-  border-radius: 999px;
-}
-
-.progress-counts.big {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-
-.progress-counts.big .count-pill {
-  padding: 6px 14px;
-  font-size: 14px;
 }
 
 /* ---- 付款进度页 ---- */
@@ -1067,10 +823,6 @@ main {
 .ghost-link {
   padding: 8px;
   margin: -8px;
-}
-
-.app-footer {
-  margin-top: var(--sp-4);
 }
 
 /* ---- 步骤流转动效（增强，可退化）---- */
@@ -1328,16 +1080,6 @@ textarea.text-input {
 
 .gen-row.single {
   grid-template-columns: 1fr;
-}
-
-.vendor-shop {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--red-600);
-}
-
-.vendor-shop strong {
-  font-weight: 700;
 }
 
 /* ---- 自绘 Vendor 下拉：店铺名红字 ---- */

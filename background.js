@@ -305,7 +305,7 @@ async function runMatchResolve() {
   }
 }
 
-// 两步连着做（测试用；界面上是分开的两个按钮）
+// 两步连着做：勾了「查完自动去 EH 匹配」时走这里（单元测试也用它）
 async function runMatchJob(brand, shops) {
   await runMatchQuery(brand, shops);
   const job = (await chrome.storage.local.get(MATCH_KEY))[MATCH_KEY] || {};
