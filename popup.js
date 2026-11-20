@@ -1187,37 +1187,45 @@
     if (area === "local" && changes.billFillJob) renderBaseJob(changes.billFillJob.newValue);
   });
 
-  // ---- 基础数据 · 全量匹配：选品牌和店铺，把 FMS 基础数据里缺结算价的行全部到 EH 找成本，生成导入文件 ----
+  // ---- 基础数据 · 补结算价：选品牌和店铺 → ① 查 FMS 基础数据里缺结算价的 SKU → ② 去 EH 导出成本匹配 → ③ 导入 ----
+  // 页面上只有一个主按钮，跟着进度变成「查询 / 去 EH 匹配 / 导入」；重做某一步用主按钮下面的小链接。
   const matchBrand = document.getElementById("matchBrand");
   const matchShops = document.getElementById("matchShops");
   const matchBtn = document.getElementById("matchBtn");
-  const matchResolveBtn = document.getElementById("matchResolveBtn");
   const matchAuto = document.getElementById("matchAuto");
+  const matchAutoWrap = document.getElementById("matchAutoWrap");
+  const matchRequery = document.getElementById("matchRequery");
+  const matchRematch = document.getElementById("matchRematch");
+  const matchSteps = document.getElementById("matchSteps");
   const matchStatus = document.getElementById("matchStatus");
+  const matchContext = document.getElementById("matchContext");
   const matchStats = document.getElementById("matchStats");
   const matchMissing = document.getElementById("matchMissing");
   const matchMissingSummary = document.getElementById("matchMissingSummary");
   const matchMissingList = document.getElementById("matchMissingList");
   const matchMissingCopy = document.getElementById("matchMissingCopy");
-  let matchMissingSkus = [];
+  const matchSearch = document.getElementById("matchSearch");
+  const matchListEmpty = document.getElementById("matchListEmpty");
+  const matchUnresolved = document.getElementById("matchUnresolved");
+  const matchDownload = document.getElementById("matchDownload");
+  const matchImportBox = document.getElementById("matchImportBox");
+  const matchImportStatus = document.getElementById("matchImportStatus");
   let matchMissingKey = "";
   let matchView = "missing"; // 下面列表当前显示哪一类：missing / matched / unresolved
   let matchViewKey = "";
-  const matchUnresolved = document.getElementById("matchUnresolved");
-  const matchDownload = document.getElementById("matchDownload");
-  const matchDownloadText = document.getElementById("matchDownloadText");
-  const matchImportBox = document.getElementById("matchImportBox");
-  const matchImportBtn = document.getElementById("matchImportBtn");
-  const matchImportStatus = document.getElementById("matchImportStatus");
   let matchRunning = false;
   let matchBlob = null;
   let matchDownloadKey = "";
   let matchImporting = false;
   let lastMatchJob = null;
-  let matchSaved = null; // 上次选的品牌和店铺（存在 matchForm），下次打开自动带出来
+  let matchSaved = null; // 上次选的品牌、店铺、是否两步一起做（存在 matchForm），下次打开自动带出来
+  let matchAction = "query"; // 主按钮当前要做的事：query / resolve / import / none
 
-  // 只有这几个店铺在 EH 里有对应的 Channel（见 FMSBaseData.SHOP_TO_CHANNEL）
+  // 只有这几个店铺在 EH 里有对应的 Channel（见 src/config.js 的 SHOP_TO_CHANNEL）
   const matchShopList = () => BillGen.SHOPS.filter((s) => FMSBaseData.channelOf(s));
+  const selectedMatchShops = () => [...matchShops.querySelectorAll("input:checked")].map((i) => i.value);
+  const sameSet = (a, b) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
+
   function renderMatchForm() {
     const cur = matchBrand.value;
     matchBrand.innerHTML = '<option value="">请选择品牌</option>' + brandList.map((b) => '<option value="' + escHtml(b) + '">' + escHtml(b) + "</option>").join("");
@@ -1231,49 +1239,73 @@
     }
     updateMatchBtn();
   }
-  const selectedMatchShops = () => [...matchShops.querySelectorAll("input:checked")].map((i) => i.value);
+
+  // 现在处于哪一步。下拉改成了别的品牌/店铺时，旧结果只作参考，主按钮回到「查询」
+  function matchState() {
+    const job = lastMatchJob || {};
+    const fms = job.fms || null;
+    const stage = fms && job.stage ? job.stage : "";
+    const sameForm = !!fms && fms.brand === matchBrand.value && sameSet(fms.shops, selectedMatchShops());
+    const rows = (stage === "matched" && job.rows) || [];
+    const canImport = rows.length > 0 && !!job.fileName;
+    return { job, fms, stage, sameForm, rows, canImport, imported: !!job.importedAt };
+  }
+
   function updateMatchBtn() {
-    matchBtn.disabled = matchRunning || !matchBrand.value || !selectedMatchShops().length;
-    // 第二步用的是第一步查出来的品牌，和下拉框当前选的无关
-    const stage = lastMatchJob && lastMatchJob.stage;
-    const queried = lastMatchJob && lastMatchJob.fms;
-    // 第一步做完后降成次要按钮（只在想重查时用），主按钮留给第二步
-    const done = !!(stage && queried);
-    matchBtn.classList.toggle("btn-primary", !done);
-    matchBtn.classList.toggle("btn-outline", done);
-    const both = matchAuto.checked;
-    matchBtn.textContent = matchRunning
-      ? "后台处理中…（可以去看别的标签页）"
-      : both
-        ? (done ? "重新查询并匹配" : "① 查询 + ② 匹配")
-        : done
-          ? "重新查询 FMS 缺失 SKU"
-          : "① 查询 FMS 缺失 SKU";
-    // 勾了两步一起做、还没查过时，第一步按钮就是主按钮
-    if (both && !done) {
-      matchBtn.classList.add("btn-primary");
-      matchBtn.classList.remove("btn-outline");
+    const s = matchState();
+    const ready = !!matchBrand.value && selectedMatchShops().length > 0;
+    let text = "";
+    if (matchRunning) {
+      matchAction = "none";
+      text = "后台处理中…（可以去看别的标签页）";
+    } else if (matchImporting) {
+      matchAction = "none";
+      text = "正在导入…";
+    } else if (!s.stage || !s.sameForm) {
+      matchAction = "query";
+      text = matchAuto.checked ? "查询缺价并去 EH 匹配" : "查询 FMS 缺价 SKU";
+    } else if (s.stage === "queried") {
+      matchAction = "resolve";
+      text = "去 EH 匹配（" + ((s.job.stats && s.job.stats.skus) || 0) + " 个 SKU）";
+    } else if (s.canImport && !s.imported) {
+      matchAction = "import";
+      text = "导入 " + s.rows.length + " 个结算价";
+    } else {
+      matchAction = "query";
+      text = "重新查询 FMS 缺价 SKU";
     }
-    matchResolveBtn.hidden = !stage || !queried;
-    matchResolveBtn.disabled = matchRunning;
-    matchResolveBtn.textContent = "② 去 EH 匹配" + (queried ? "（" + queried.brand + "）" : "");
+    matchBtn.textContent = text;
+    matchBtn.disabled = matchAction === "none" || (matchAction === "query" && !ready);
+
+    // 主按钮下面：还没查过时显示「两步一起做」；查过之后显示重做某一步的小链接
+    const idle = !matchRunning && !matchImporting;
+    const onResult = !!s.stage && s.sameForm;
+    matchAutoWrap.hidden = !(matchAction === "query" && !onResult);
+    matchRequery.hidden = !(idle && onResult && matchAction !== "query");
+    matchRematch.hidden = !(idle && onResult && s.stage === "matched");
+
+    // 顶部三步进度
+    const step = (n, done, active) => {
+      const li = matchSteps.querySelector('[data-step="' + n + '"]');
+      li.classList.toggle("done", done);
+      li.classList.toggle("active", !done && active);
+    };
+    const queried = onResult;
+    const matched = onResult && s.stage === "matched";
+    step(1, queried, !queried);
+    step(2, matched, queried && !matched);
+    step(3, matched && s.imported, matched && s.canImport && !s.imported);
   }
   function saveMatchForm() {
     matchSaved = { brand: matchBrand.value, shops: selectedMatchShops(), auto: matchAuto.checked };
     chrome.storage.local.set({ matchForm: matchSaved });
   }
-  matchBrand.addEventListener("change", () => {
-    saveMatchForm();
-    updateMatchBtn();
-  });
-  matchShops.addEventListener("change", () => {
-    saveMatchForm();
-    updateMatchBtn();
-  });
-  matchAuto.addEventListener("change", () => {
-    saveMatchForm();
-    updateMatchBtn();
-  });
+  for (const el of [matchBrand, matchShops, matchAuto]) {
+    el.addEventListener("change", () => {
+      saveMatchForm();
+      renderMatchJob(lastMatchJob); // 换了品牌/店铺要重算主按钮和「旧结果」提示
+    });
+  }
 
   function setMatchImportStatus(text, kind) {
     matchImportStatus.hidden = !text;
@@ -1310,14 +1342,18 @@
     return list;
   }
 
-  // 下面的列表：按当前视图列出 SKU。组头写一次（店铺 / 站点，或补不上的原因），行里只放 SKU（能补的再带上价格）
+  // 下面的列表：按当前视图列出 SKU。组头写一次（店铺 / 站点），行里左边 SKU，右边是价格（能补）或原因（补不上）
   function renderMatchList(job) {
     const groups = new Map();
-    const skus = [];
-    const add = (g, html, sku) => {
+    let count = 0;
+    const add = (g, sku, right, rightCls, title) => {
       if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push(html);
-      skus.push(sku);
+      groups.get(g).push(
+        '<div class="missing-sku" data-sku="' + escHtml(String(sku).toLowerCase()) + '"><span>' + escHtml(sku) + "</span>" +
+          (right ? '<span class="' + rightCls + '"' + (title ? ' title="' + escHtml(title) + '"' : "") + ">" + escHtml(right) + "</span>" : "") +
+          "</div>"
+      );
+      count++;
     };
     const where = (shop, site) => (shop || "") + " / " + (site || "");
     let title = "";
@@ -1325,24 +1361,14 @@
       title = "EH 能补";
       for (const r of job.rows || []) {
         const price = Number(r["结算单价"]);
-        add(
-          where(r["店铺"], r["站点"]),
-          '<div class="missing-sku"><span>' + escHtml(r["MM SKU"]) + '</span><span class="sku-price">' + escHtml((isFinite(price) ? price.toFixed(2) : r["结算单价"]) + " " + (r["结算币种"] || "")) + "</span></div>",
-          r["MM SKU"]
-        );
+        add(where(r["店铺"], r["站点"]), r["MM SKU"], (isFinite(price) ? price.toFixed(2) : r["结算单价"]) + " " + (r["结算币种"] || ""), "sku-price");
       }
     } else if (matchView === "unresolved") {
       title = "补不上";
-      // 原因缩成几个字放在行右边（和能补那边的价格同一个位置），完整原因放在鼠标悬停提示里
+      // 原因缩成几个字放在行右边，完整原因放在鼠标悬停提示里
       const short = (r) =>
         /没有成本/.test(r) ? "EH 无成本" : /搜不到/.test(r) ? "EH 搜不到" : /币种/.test(r) ? "币种不一致" : /Channel|渠道/.test(r) ? "无 EH 渠道" : /查询失败|失败/.test(r) ? "EH 查询失败" : r;
-      for (const u of unresolvedListOf(job)) {
-        add(
-          where(u.shop, u.site),
-          '<div class="missing-sku"><span>' + escHtml(u.sku) + '</span><span class="sku-reason" title="' + escHtml(u.reason) + '">' + escHtml(short(u.reason)) + "</span></div>",
-          u.sku
-        );
-      }
+      for (const u of unresolvedListOf(job)) add(where(u.shop, u.site), u.sku, short(u.reason), "sku-reason", u.reason);
     } else {
       title = "缺价 SKU";
       const seen = new Set();
@@ -1350,27 +1376,48 @@
         const k = [r.siteCode, r.shopCode, r.sku].join("|");
         if (seen.has(k)) continue;
         seen.add(k);
-        add(where(r.shopCode, r.siteCode), '<div class="missing-sku"><span>' + escHtml(r.sku) + "</span></div>", r.sku);
+        add(where(r.shopCode, r.siteCode), r.sku);
       }
     }
-    matchMissing.hidden = !skus.length;
-    if (!skus.length) return;
-    matchMissingSkus = [...new Set(skus)];
-    matchMissingSummary.textContent = title + " · " + skus.length + " 个";
+    matchMissing.hidden = !count;
+    if (!count) return;
+    matchMissingSummary.textContent = title + " · " + count;
     matchMissingList.innerHTML = [...groups]
-      .map(([g, rows]) => '<div class="missing-group-head"><span>' + escHtml(g) + "</span><span>" + rows.length + "</span></div>" + rows.join(""))
+      .map(([g, rows]) => '<div class="missing-group"><div class="missing-group-head"><span>' + escHtml(g) + "</span><span>" + rows.length + "</span></div>" + rows.join("") + "</div>")
       .join("");
     const key = matchView + ":" + matchViewKey;
     if (key !== matchMissingKey) {
       matchMissingKey = key;
-      matchMissing.open = true; // 换了视图或有新结果就展开
       matchMissingList.scrollTop = 0;
     }
+    applyMatchSearch();
   }
+
+  // 列表里搜 SKU（不区分大小写，包含即可）
+  function applyMatchSearch() {
+    const q = matchSearch.value.trim().toLowerCase();
+    let shown = 0;
+    for (const g of matchMissingList.querySelectorAll(".missing-group")) {
+      let n = 0;
+      for (const row of g.querySelectorAll(".missing-sku")) {
+        const hit = !q || row.dataset.sku.includes(q);
+        row.hidden = !hit;
+        if (hit) n++;
+      }
+      g.hidden = n === 0;
+      const cnt = g.querySelector(".missing-group-head span:last-child");
+      if (cnt) cnt.textContent = n; // 组头数量跟着搜索结果变
+      shown += n;
+    }
+    matchListEmpty.hidden = shown > 0;
+  }
+  matchSearch.addEventListener("input", applyMatchSearch);
+
   matchStats.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-view]");
     if (!b || b.disabled) return;
     matchView = b.dataset.view;
+    matchSearch.value = "";
     renderMatchJob(lastMatchJob);
   });
 
@@ -1379,12 +1426,19 @@
     matchRunning = !!(job && job.running);
     updateMatchBtn();
     if (!job || !job.text) {
-      [matchStatus, matchStats, matchMissing, matchUnresolved, matchDownload, matchImportBox].forEach((e) => (e.hidden = true));
+      [matchStatus, matchContext, matchStats, matchMissing, matchUnresolved, matchImportBox, matchDownload].forEach((e) => (e.hidden = true));
       return;
     }
+    const s = matchState();
     matchStatus.hidden = false;
     matchStatus.textContent = job.text;
     matchStatus.className = "status" + (job.kind ? " " + job.kind : "");
+
+    // 下拉换了品牌/店铺：说清楚下面还是上一次的结果
+    const stale = !!s.fms && !s.sameForm && !matchRunning;
+    matchContext.hidden = !stale;
+    if (stale) matchContext.textContent = "下面是 " + s.fms.brand + "（" + (s.fms.shops || []).join("、") + "）的结果；点上面按钮会按新选择重新查询。";
+    matchStatus.hidden = stale && !matchRunning; // 旧结果的状态文字不再显示，免得误会
 
     const st = job.stats;
     matchStats.hidden = !st;
@@ -1393,6 +1447,7 @@
     if (viewKey !== matchViewKey) {
       matchViewKey = viewKey;
       matchView = job.stage === "matched" ? (st && st.matched ? "matched" : "unresolved") : "missing";
+      matchSearch.value = "";
     }
     if (st) {
       // 三张卡片就是三个切换按钮，点哪个下面就列哪一类
@@ -1408,16 +1463,20 @@
         tile("matched", "ok", st.matched, "EH 能补") +
         tile("unresolved", st.unresolved ? "overdue" : "", st.unresolved, "补不上");
     }
+    matchStats.classList.toggle("stale", stale);
+    matchMissing.classList.toggle("stale", stale);
     renderMatchList(job);
+
     const skipped = st && st.skipped ? Object.entries(st.skipped) : [];
     const extra = [];
-    if (skipped.length) extra.push("没有对应 EH 渠道、已跳过：" + skipped.map(([s, n]) => s + "（" + n + " 个）").join("、"));
+    if (skipped.length) extra.push("没有对应 EH 渠道、已跳过：" + skipped.map(([sh, n]) => sh + "（" + n + " 个）").join("、"));
     if (job.warnings && job.warnings.length) extra.push("检查提示：" + job.warnings.join("；"));
     const text = [unresolvedListOf(job).length ? "" : job.unresolved, ...extra].filter(Boolean).join("\n");
     matchUnresolved.hidden = !text;
     matchUnresolved.textContent = text;
 
-    if (!job.running && job.rows && job.rows.length && job.fileName) {
+    // 导入区：下载核对 + 导入结果（导入本身用主按钮）
+    if (!job.running && s.canImport && !stale) {
       const key = job.fileName + ":" + job.rows.length + ":" + (job.startedAt || 0);
       if (key !== matchDownloadKey) {
         matchDownloadKey = key;
@@ -1425,91 +1484,94 @@
         matchBlob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         matchDownload.href = URL.createObjectURL(matchBlob);
         matchDownload.download = job.fileName;
-        matchDownloadText.textContent = "下载：" + job.fileName;
-        setMatchImportStatus("");
       }
       matchDownload.hidden = false;
-      matchImportBox.hidden = false;
+      if (!matchImporting) setMatchImportStatus(job.importMsg || "", job.importKind || "");
+      matchImportBox.hidden = !matchImporting && !job.importMsg;
     } else {
       matchDownload.hidden = true;
       matchImportBox.hidden = true;
     }
   }
 
-  matchBtn.addEventListener("click", async () => {
+  // 主按钮：按当前进度做下一步
+  async function startMatch(type, payload) {
+    matchRunning = true;
+    updateMatchBtn();
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage(Object.assign({ type }, payload || {}));
+    } catch (e) {
+      res = null;
+    }
+    if (!res || !res.started) {
+      matchRunning = false;
+      updateMatchBtn();
+      matchStatus.hidden = false;
+      matchStatus.className = "status error";
+      matchStatus.textContent = (res && res.reason) || "后台服务没有响应。请在浏览器的扩展管理页刷新本插件，再重试。";
+    }
+  }
+  const startQuery = () => {
     const brand = matchBrand.value;
     const shops = selectedMatchShops();
     if (!brand || !shops.length) return;
-    matchRunning = true;
-    updateMatchBtn();
-    let res;
-    try {
-      res = await chrome.runtime.sendMessage({ type: "match:query", brand, shops, auto: matchAuto.checked });
-    } catch (e) {
-      res = null;
-    }
-    if (!res || !res.started) {
-      matchRunning = false;
-      updateMatchBtn();
-      matchStatus.hidden = false;
-      matchStatus.className = "status error";
-      matchStatus.textContent = (res && res.reason) || "后台服务没有响应。请在浏览器的扩展管理页刷新本插件，再重试。";
-    }
+    startMatch("match:query", { brand, shops, auto: matchAuto.checked });
+  };
+  matchBtn.addEventListener("click", () => {
+    if (matchAction === "query") startQuery();
+    else if (matchAction === "resolve") startMatch("match:resolve");
+    else if (matchAction === "import") importMatch();
   });
+  matchRequery.addEventListener("click", startQuery);
+  matchRematch.addEventListener("click", () => startMatch("match:resolve"));
 
-  matchMissingCopy.addEventListener("click", async (e) => {
-    e.preventDefault(); // 按钮在 summary 里，别触发折叠
-    e.stopPropagation();
+  matchMissingCopy.addEventListener("click", async () => {
+    // 复制当前列表里看得见的 SKU（搜过就只复制搜到的）
+    const skus = [...matchMissingList.querySelectorAll(".missing-sku:not([hidden])")].map((r) => r.firstElementChild.textContent);
+    const uniq = [...new Set(skus)];
     try {
-      await navigator.clipboard.writeText(matchMissingSkus.join("\n"));
-      matchMissingCopy.textContent = "已复制 " + matchMissingSkus.length + " 个";
+      await navigator.clipboard.writeText(uniq.join("\n"));
+      matchMissingCopy.textContent = "已复制 " + uniq.length;
     } catch (err) {
       matchMissingCopy.textContent = "复制失败";
     }
-    setTimeout(() => (matchMissingCopy.textContent = "复制 SKU"), 1800);
+    setTimeout(() => (matchMissingCopy.textContent = "复制"), 1800);
   });
 
-  matchResolveBtn.addEventListener("click", async () => {
-    matchRunning = true;
-    updateMatchBtn();
-    let res;
-    try {
-      res = await chrome.runtime.sendMessage({ type: "match:resolve" });
-    } catch (e) {
-      res = null;
-    }
-    if (!res || !res.started) {
-      matchRunning = false;
-      updateMatchBtn();
-      matchStatus.hidden = false;
-      matchStatus.className = "status error";
-      matchStatus.textContent = (res && res.reason) || "后台服务没有响应。请在浏览器的扩展管理页刷新本插件，再重试。";
-    }
-  });
-
-  matchImportBtn.addEventListener("click", async () => {
-    if (!matchBlob || matchImporting) return;
-    if (!confirm("确认已检查过导入文件？将直接导入 FMS「基础数据」，补上这些 SKU 的结算价。")) return;
+  // 导入：确认后后台打开 FMS「基础数据」上传；结果写回 matchJob，关掉侧边栏再打开也能看到
+  async function importMatch() {
+    const s = matchState();
+    if (!matchBlob || matchImporting || !s.canImport) return;
+    if (!confirm("将把 " + s.rows.length + " 个 SKU 的结算价导入 FMS「基础数据」（只补空的，不改已有价格）。\n\n确认已下载核对过导入文件？")) return;
     matchImporting = true;
-    matchImportBtn.disabled = true;
+    updateMatchBtn();
+    matchImportBox.hidden = false;
     setMatchImportStatus("正在导入：后台打开 FMS「基础数据」→ 上传文件 → 确认…（可以去看别的标签页）", "busy");
+    let msg = "";
+    let kind = "";
     try {
       const base64 = await fileToBase64(matchBlob);
       const res = await chrome.runtime.sendMessage({ type: "baseData:import", fileName: matchDownload.download, base64 });
       if (!res || !res.ok) {
-        setMatchImportStatus("导入失败：" + ((res && res.error) || "后台没有返回结果，请刷新插件后重试"), "error");
+        msg = "导入失败：" + ((res && res.error) || "后台没有返回结果，请刷新插件后重试");
+        kind = "error";
       } else {
         const tips = res.messages && res.messages.length ? "FMS 提示：" + res.messages.join("；") + "\n" : "";
-        setMatchImportStatus("已提交导入。" + tips + "导入是否成功，可到 FMS「基础数据」→「导入导出任务」确认。", "ok");
+        msg = "已提交导入。" + tips + "可到 FMS「基础数据」→「导入导出任务」确认结果，或点「重新查询」看还缺哪些。";
+        kind = "ok";
       }
     } catch (err) {
       console.error(err);
-      setMatchImportStatus("导入失败：" + err.message, "error");
-    } finally {
-      matchImporting = false;
-      matchImportBtn.disabled = false;
+      msg = "导入失败：" + err.message;
+      kind = "error";
     }
-  });
+    matchImporting = false;
+    const cur = (await chrome.storage.local.get("matchJob")).matchJob || {};
+    const patch = { importMsg: msg, importKind: kind };
+    if (kind === "ok") patch.importedAt = Date.now();
+    await chrome.storage.local.set({ matchJob: Object.assign({}, cur, patch) }); // 触发 onChanged → 重新渲染
+  }
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.matchJob) renderMatchJob(changes.matchJob.newValue);

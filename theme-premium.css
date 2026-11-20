@@ -165,3 +165,45 @@ button.stat-tile.active { border-color: var(--blue-500); box-shadow: inset 0 0 0
 .sku-reason { flex: none; font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 11.5px; font-weight: 600; color: #c0392b; }
 .match-auto { display: flex; align-items: center; gap: 6px; margin: -4px 2px 0; font-size: 12px; color: var(--ink-700); cursor: pointer; }
 .match-auto input { margin: 0; }
+
+/* ---- 补结算价页（基础数据）---- */
+.match-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.match-head .flow-title { margin: 0; }
+.match-steps { display: flex; align-items: center; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 11.5px; color: var(--ink-500); }
+.match-steps li { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.match-steps li + li::before { content: ""; width: 10px; height: 1px; margin-right: 2px; background: var(--line); }
+.match-steps li span { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; font-weight: 700; color: var(--ink-500); background: var(--surface-muted); border: 1px solid var(--line); }
+.match-steps li.active { color: var(--blue-600); font-weight: 600; }
+.match-steps li.active span { color: #fff; background: var(--blue-600); border-color: var(--blue-600); }
+.match-steps li.done { color: var(--green-600); }
+.match-steps li.done span { color: #fff; background: var(--green-600); border-color: var(--green-600); font-size: 0; }
+.match-steps li.done span::after { content: "✓"; font-size: 10px; }
+
+.match-actions { gap: 8px; margin: 4px 0 12px; }
+.match-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; }
+.match-sub .match-auto { margin: 0; }
+.match-sub .match-auto[hidden] { display: none; }
+.match-links { display: inline-flex; gap: 12px; margin-left: auto; }
+.match-links .ghost-link[hidden] { display: none; }
+
+.match-context { margin: 0 0 10px; padding: 8px 10px; font-size: 12px; line-height: 1.5; color: #8a4b00; background: #fff4e5; border-radius: 9px; }
+.match-stats.stale, .match-missing.stale { opacity: 0.55; }
+
+/* 列表头：标题 · 搜索 · 复制 */
+.match-missing > summary { display: none; }
+.match-list-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
+.match-list-head > span { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink-900); }
+.match-search { flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--ink-900); background: var(--surface-muted); border: 1px solid var(--line); border-radius: 7px; outline: none; }
+.match-search:focus { background: #fff; border-color: var(--blue-500); }
+.missing-copy { flex: none; }
+.missing-sku[hidden], .missing-group[hidden], .match-list-empty[hidden] { display: none; }
+.match-list-empty { padding: 14px 12px; font-size: 12px; text-align: center; color: var(--ink-500); border-top: 1px solid var(--line); }
+
+/* 导入区：主按钮负责导入，这里只放下载核对和导入结果 */
+.match-import { margin-top: 2px; }
+#matchImportBox .status { margin-top: 8px; white-space: pre-wrap; }
+.match-links .match-download[hidden] { display: none; }
+.match-links { align-items: center; }
+.match-links .ghost-link:hover { color: var(--blue-600); }
+.match-links .match-download { font-size: 11.5px; font-weight: 600; color: var(--blue-600); text-decoration: none; }
+.match-links .match-download:hover { text-decoration: underline; }

@@ -237,7 +237,14 @@
 
     <section id="tabMatch" class="tab-panel" role="tabpanel" hidden>
       <div class="flow-card match-card">
-        <h2 class="flow-title">全量匹配</h2>
+        <div class="match-head">
+          <h2 class="flow-title">补结算价</h2>
+          <ol id="matchSteps" class="match-steps" aria-label="进度">
+            <li data-step="1"><span>1</span>查缺价</li>
+            <li data-step="2"><span>2</span>EH 匹配</li>
+            <li data-step="3"><span>3</span>导入</li>
+          </ol>
+        </div>
         <div class="field-block">
           <label for="matchBrand" class="field-label">品牌</label>
           <select id="matchBrand" class="text-input"></select>
@@ -247,29 +254,30 @@
           <div id="matchShops" class="brand-checks"></div>
         </div>
         <div class="match-actions">
-          <button id="matchBtn" type="button" class="btn btn-primary btn-full" disabled>① 查询 FMS 缺失 SKU</button>
-          <label class="match-auto"><input type="checkbox" id="matchAuto"><span>查完自动去 EH 匹配（两步一起做）</span></label>
-          <button id="matchResolveBtn" type="button" class="btn btn-primary btn-full" hidden>② 去 EH 匹配</button>
+          <button id="matchBtn" type="button" class="btn btn-primary btn-full" disabled>查询 FMS 缺价 SKU</button>
+          <div class="match-sub">
+            <label id="matchAutoWrap" class="match-auto"><input type="checkbox" id="matchAuto"><span>查完自动去 EH 匹配</span></label>
+            <span class="match-links">
+              <a id="matchDownload" class="ghost-link match-download" download hidden>下载导入文件核对</a>
+              <button id="matchRequery" type="button" class="ghost-link" hidden>重新查询</button>
+              <button id="matchRematch" type="button" class="ghost-link" hidden>重新匹配 EH</button>
+            </span>
+          </div>
         </div>
         <div id="matchStatus" class="status" hidden></div>
+        <div id="matchContext" class="match-context" hidden></div>
         <div id="matchStats" class="stat-grid match-stats" hidden></div>
-        <details id="matchMissing" class="match-missing" hidden>
-          <summary>
-            <span id="matchMissingSummary">FMS 缺失 SKU</span>
-            <button id="matchMissingCopy" type="button" class="missing-copy">复制 SKU</button>
-          </summary>
+        <div id="matchMissing" class="match-missing" hidden>
+          <div class="match-list-head">
+            <span id="matchMissingSummary">缺价 SKU</span>
+            <input id="matchSearch" class="match-search" type="search" placeholder="搜 SKU" autocomplete="off" />
+            <button id="matchMissingCopy" type="button" class="missing-copy">复制</button>
+          </div>
           <div id="matchMissingList" class="missing-list"></div>
-        </details>
+          <div id="matchListEmpty" class="match-list-empty" hidden>没有匹配的 SKU</div>
+        </div>
         <pre id="matchUnresolved" class="match-unresolved" hidden></pre>
-        <a id="matchDownload" class="file-chip file-chip-link" hidden download>
-          <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 4v11m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span id="matchDownloadText" class="file-chip-name">下载导入文件</span>
-        </a>
-        <div id="matchImportBox" hidden>
-          <button id="matchImportBtn" type="button" class="btn btn-primary btn-full">一键导入</button>
+        <div id="matchImportBox" class="match-import" hidden>
           <div id="matchImportStatus" class="status" hidden></div>
         </div>
       </div>

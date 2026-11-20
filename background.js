@@ -204,7 +204,7 @@ async function runMatchQuery(brand, shops) {
       stats: noChannel ? { ...stats, matched: 0, unresolved: 0 } : { ...stats, matched: null, unresolved: null },
       text: noChannel
         ? "FMS 缺价 " + fms.missing.length + " 行，但这些店铺都没有对应的 EH 渠道，没法去 EH 匹配。"
-        : "第一步完成：FMS 缺价 " + fms.missing.length + " 行（" + plan.items.length + " 个 SKU）。可以点「② 去 EH 匹配」。",
+        : "已查到 FMS 缺价 " + fms.missing.length + " 行（" + plan.items.length + " 个 SKU）。",
     });
   } catch (err) {
     console.error(err);
@@ -288,7 +288,7 @@ async function runMatchResolve() {
       kind: out.unresolved.length || check.warnings.length ? "" : "ok",
       stage: "matched",
       stats: { ...baseStats, matched: out.rows.length, unresolved: out.unresolved.length },
-      text: out.rows.length ? "已匹配 " + out.rows.length + " 个。请先检查导入文件，没问题再点「一键导入」。" : "没有能补上的 SKU。",
+      text: out.rows.length ? "EH 能补 " + out.rows.length + " 个。导入前请先下载核对。" : "没有能补上的 SKU。",
       unresolved: lines.join("\n"),
       unresolvedList: out.unresolved.map((u) => ({ sku: u.item.sku, shop: u.item.shop, site: u.item.site, reason: u.reason.replace(/（[^）]*）/g, "").replace(/\(.*?\)/g, "") })),
       warnings: check.warnings.slice(0, 10),
@@ -664,13 +664,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ started: false, reason: "请先做第一步：查询 FMS 缺失 SKU" });
           return;
         }
-        await setMatch({ running: true, startedAt: Date.now(), text: "任务已开始…", kind: "busy", unresolved: "", rows: [], fileName: "", warnings: [] });
+        await setMatch({ running: true, startedAt: Date.now(), text: "任务已开始…", kind: "busy", unresolved: "", rows: [], fileName: "", warnings: [], importedAt: null, importMsg: "", importKind: "" });
         sendResponse({ started: true });
         runMatchResolve();
         return;
       }
       const shops = Array.isArray(msg.shops) ? msg.shops : [];
-      await setMatch({ running: true, startedAt: Date.now(), brand: msg.brand, shops, text: "任务已开始…", kind: "busy", stage: "", fms: null, stats: null, unresolved: "", rows: [], fileName: "", warnings: [] });
+      await setMatch({ running: true, startedAt: Date.now(), brand: msg.brand, shops, text: "任务已开始…", kind: "busy", stage: "", fms: null, stats: null, unresolved: "", rows: [], fileName: "", warnings: [], importedAt: null, importMsg: "", importKind: "" });
       sendResponse({ started: true });
       if (msg.auto) runMatchJob(msg.brand, shops); // 两步一起做：查完接着去 EH 匹配
       else runMatchQuery(msg.brand, shops);
