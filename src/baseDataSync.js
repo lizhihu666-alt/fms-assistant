@@ -970,12 +970,26 @@ const BaseDataSync = (() => {
         // 打开任务列表，等这次点出来的任务完成（已经取过的任务不再认）
         let item = null;
         const deadline = Date.now() + 240000;
+        const isTaskList = (c) => /export\/list/.test(c.url);
         while (Date.now() < deadline && !item) {
-          window[capKey].length = 0;
+          // 任务列表只在弹层打开时刷新：已经开着就先关上，再打开，让页面重新拉一次列表
+          const before = window[capKey].length;
           const icon = await waitFor(taskIcon, "导出任务图标", 10000);
-          if (!taskItems().length) fire(icon.closest("button") || icon);
-          await waitFor(() => window[capKey].find((c) => /export\/list/.test(c.url)), "导出任务列表", 20000);
-          const lj = parse(window[capKey].filter((c) => /export\/list/.test(c.url)).pop());
+          const btn = icon.closest("button") || icon;
+          if (taskItems().length) {
+            fire(btn);
+            await sleep(700);
+          }
+          fire(btn);
+          let got = null;
+          try {
+            got = await waitFor(() => window[capKey].slice(before).filter(isTaskList).pop(), "导出任务列表", 12000);
+          } catch (e) {
+            step(label + " 任务列表没有刷新，再试一次");
+            await sleep(1500);
+            continue;
+          }
+          const lj = parse(got);
           const list = (lj && lj.data && lj.data.list) || [];
           const latest = list.filter((t) => t.export_type === "admin_pricing" && t.created_at >= startSec && !usedTaskIds.has(t.id))[0];
           if (latest && latest.status === 2) {
@@ -984,7 +998,6 @@ const BaseDataSync = (() => {
             throw new Error("导出任务状态异常: " + (latest.status_name || latest.status) + (latest.failure_reason ? "（" + latest.failure_reason + "）" : ""));
           } else {
             step(label + " 导出生成中…");
-            if (taskItems().length) fire(icon.closest("button") || icon); // 关掉再开，触发刷新
             await sleep(4000);
           }
         }
