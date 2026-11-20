@@ -23,6 +23,7 @@
     <nav class="main-tabs" role="tablist" aria-label="功能切换">
       <button type="button" class="main-tab" data-tab="progress" role="tab" aria-selected="false">付款进度</button>
       <button type="button" class="main-tab is-active" data-tab="flow" role="tab" aria-selected="true">请款流程</button>
+      <button type="button" class="main-tab" data-tab="match" role="tab" aria-selected="false">基础数据</button>
     </nav>
 
     <section id="tabFlow" class="tab-panel" role="tabpanel">
@@ -232,6 +233,35 @@
         </div>
       </li>
     </ol>
+    </section>
+
+    <section id="tabMatch" class="tab-panel" role="tabpanel" hidden>
+      <div class="flow-card match-card">
+        <h2 class="flow-title">全量匹配</h2>
+        <div class="field-block">
+          <label for="matchBrand" class="field-label">品牌</label>
+          <select id="matchBrand" class="text-input"></select>
+        </div>
+        <div class="field-block">
+          <label class="field-label">店铺</label>
+          <div id="matchShops" class="brand-checks"></div>
+        </div>
+        <button id="matchBtn" type="button" class="btn btn-primary btn-full" disabled>全量匹配</button>
+        <div id="matchStatus" class="status" hidden></div>
+        <div id="matchStats" class="stat-grid match-stats" hidden></div>
+        <pre id="matchUnresolved" class="match-unresolved" hidden></pre>
+        <a id="matchDownload" class="file-chip file-chip-link" hidden download>
+          <svg class="file-chip-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 4v11m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span id="matchDownloadText" class="file-chip-name">下载导入文件</span>
+        </a>
+        <div id="matchImportBox" hidden>
+          <button id="matchImportBtn" type="button" class="btn btn-primary btn-full">一键导入</button>
+          <div id="matchImportStatus" class="status" hidden></div>
+        </div>
+      </div>
     </section>
 
     <section id="tabProgress" class="tab-panel" role="tabpanel" hidden>

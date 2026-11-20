@@ -1202,6 +1202,151 @@
     if (area === "local" && changes.baseJob) renderBaseJob(changes.baseJob.newValue);
   });
 
+  // ---- 基础数据 · 全量匹配：选品牌和店铺，把 FMS 基础数据里缺结算价的行全部到 EH 找成本，生成导入文件 ----
+  const matchBrand = document.getElementById("matchBrand");
+  const matchShops = document.getElementById("matchShops");
+  const matchBtn = document.getElementById("matchBtn");
+  const matchStatus = document.getElementById("matchStatus");
+  const matchStats = document.getElementById("matchStats");
+  const matchUnresolved = document.getElementById("matchUnresolved");
+  const matchDownload = document.getElementById("matchDownload");
+  const matchDownloadText = document.getElementById("matchDownloadText");
+  const matchImportBox = document.getElementById("matchImportBox");
+  const matchImportBtn = document.getElementById("matchImportBtn");
+  const matchImportStatus = document.getElementById("matchImportStatus");
+  let matchRunning = false;
+  let matchBlob = null;
+  let matchDownloadKey = "";
+  let matchImporting = false;
+  let lastMatchJob = null;
+
+  // 只有这几个店铺在 EH 里有对应的 Channel（见 FMSBaseData.SHOP_TO_CHANNEL）
+  const matchShopList = () => BillGen.SHOPS.filter((s) => FMSBaseData.channelOf(s));
+  function renderMatchForm() {
+    const cur = matchBrand.value;
+    matchBrand.innerHTML = '<option value="">请选择品牌</option>' + brandList.map((b) => '<option value="' + escHtml(b) + '">' + escHtml(b) + "</option>").join("");
+    if (cur && brandList.includes(cur)) matchBrand.value = cur;
+    if (!matchShops.children.length) {
+      matchShops.innerHTML = matchShopList()
+        .map((s) => '<label class="brand-check"><input type="checkbox" value="' + escHtml(s) + '" checked><span>' + escHtml(s) + "</span></label>")
+        .join("");
+    }
+    updateMatchBtn();
+  }
+  const selectedMatchShops = () => [...matchShops.querySelectorAll("input:checked")].map((i) => i.value);
+  function updateMatchBtn() {
+    matchBtn.disabled = matchRunning || !matchBrand.value || !selectedMatchShops().length;
+    matchBtn.textContent = matchRunning ? "后台匹配中…（可以去看别的标签页）" : "全量匹配";
+  }
+  matchBrand.addEventListener("change", updateMatchBtn);
+  matchShops.addEventListener("change", updateMatchBtn);
+
+  function setMatchImportStatus(text, kind) {
+    matchImportStatus.hidden = !text;
+    matchImportStatus.textContent = text || "";
+    matchImportStatus.className = "status" + (kind ? " " + kind : "");
+  }
+
+  async function renderMatchJob(job) {
+    lastMatchJob = job || null;
+    matchRunning = !!(job && job.running);
+    updateMatchBtn();
+    if (!job || !job.text) {
+      [matchStatus, matchStats, matchUnresolved, matchDownload, matchImportBox].forEach((e) => (e.hidden = true));
+      return;
+    }
+    matchStatus.hidden = false;
+    matchStatus.textContent = job.text;
+    matchStatus.className = "status" + (job.kind ? " " + job.kind : "");
+
+    const st = job.stats;
+    matchStats.hidden = !st;
+    if (st) {
+      matchStats.innerHTML =
+        '<div class="stat-tile"><span class="stat-num">' + st.skus + '</span><span class="stat-label">缺价 SKU</span></div>' +
+        '<div class="stat-tile ok"><span class="stat-num">' + st.matched + '</span><span class="stat-label">EH 能补</span></div>' +
+        '<div class="stat-tile ' + (st.unresolved ? "overdue" : "") + '"><span class="stat-num">' + st.unresolved + '</span><span class="stat-label">补不上</span></div>';
+    }
+    const skipped = st && st.skipped ? Object.entries(st.skipped) : [];
+    const extra = [];
+    if (skipped.length) extra.push("没有对应 EH 渠道、已跳过：" + skipped.map(([s, n]) => s + "（" + n + " 个）").join("、"));
+    if (job.warnings && job.warnings.length) extra.push("检查提示：" + job.warnings.join("；"));
+    const text = [job.unresolved, ...extra].filter(Boolean).join("\n");
+    matchUnresolved.hidden = !text;
+    matchUnresolved.textContent = text;
+
+    if (!job.running && job.rows && job.rows.length && job.fileName) {
+      const key = job.fileName + ":" + job.rows.length + ":" + (job.startedAt || 0);
+      if (key !== matchDownloadKey) {
+        matchDownloadKey = key;
+        const wb = FMSBaseData.toWorkbook(ExcelJS, job.rows);
+        matchBlob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        matchDownload.href = URL.createObjectURL(matchBlob);
+        matchDownload.download = job.fileName;
+        matchDownloadText.textContent = "下载：" + job.fileName;
+        setMatchImportStatus("");
+      }
+      matchDownload.hidden = false;
+      matchImportBox.hidden = false;
+    } else {
+      matchDownload.hidden = true;
+      matchImportBox.hidden = true;
+    }
+  }
+
+  matchBtn.addEventListener("click", async () => {
+    const brand = matchBrand.value;
+    const shops = selectedMatchShops();
+    if (!brand || !shops.length) return;
+    matchRunning = true;
+    updateMatchBtn();
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({ type: "match:start", brand, shops });
+    } catch (e) {
+      res = null;
+    }
+    if (!res || !res.started) {
+      matchRunning = false;
+      updateMatchBtn();
+      matchStatus.hidden = false;
+      matchStatus.className = "status error";
+      matchStatus.textContent = (res && res.reason) || "后台服务没有响应。请在浏览器的扩展管理页刷新本插件，再重试。";
+    }
+  });
+
+  matchImportBtn.addEventListener("click", async () => {
+    if (!matchBlob || matchImporting) return;
+    if (!confirm("确认已检查过导入文件？将直接导入 FMS「基础数据」，补上这些 SKU 的结算价。")) return;
+    matchImporting = true;
+    matchImportBtn.disabled = true;
+    setMatchImportStatus("正在导入：后台打开 FMS「基础数据」→ 上传文件 → 确认…（可以去看别的标签页）", "busy");
+    try {
+      const base64 = await fileToBase64(matchBlob);
+      const res = await chrome.runtime.sendMessage({ type: "baseData:import", fileName: matchDownload.download, base64 });
+      if (!res || !res.ok) {
+        setMatchImportStatus("导入失败：" + ((res && res.error) || "后台没有返回结果，请刷新插件后重试"), "error");
+      } else {
+        const tips = res.messages && res.messages.length ? "FMS 提示：" + res.messages.join("；") + "\n" : "";
+        setMatchImportStatus("已提交导入。" + tips + "导入是否成功，可到 FMS「基础数据」→「导入导出任务」确认。", "ok");
+      }
+    } catch (err) {
+      console.error(err);
+      setMatchImportStatus("导入失败：" + err.message, "error");
+    } finally {
+      matchImporting = false;
+      matchImportBtn.disabled = false;
+    }
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.matchJob) renderMatchJob(changes.matchJob.newValue);
+  });
+  chrome.storage.local.get("matchJob", (r) => {
+    renderMatchForm();
+    renderMatchJob(r.matchJob);
+  });
+
   // ---- 付款进度摘要：数据来自看板上次同步的快照，点击打开（或切到）看板页 ----
 
   document.getElementById("openDashboardBtn").addEventListener("click", async () => {
@@ -1317,6 +1462,8 @@
     });
     document.getElementById("tabFlow").hidden = name !== "flow";
     document.getElementById("tabProgress").hidden = name !== "progress";
+    document.getElementById("tabMatch").hidden = name !== "match";
+    if (name === "match") renderMatchForm();
     chrome.storage.local.set({ panelTab: name });
   }
   document.querySelectorAll(".main-tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));

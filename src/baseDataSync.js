@@ -413,5 +413,487 @@ const BaseDataSync = (() => {
     }
   }
 
-  return { FMS_ORIGIN, FMS_BILL_URL, FMS_BASEDATA_URL, EH_ORIGIN, EH_PRICING_URL, fetchMissingPriceRows, fetchEhCosts, importBaseDataFile };
+  /**
+   * FMS「基础数据」页：按品牌（+店铺）筛选，把该品牌的基础数据全量读出来（每页 1000 条），
+   * 返回其中「没有结算价」的行（数据状态一般是「待确认」）。全程只做筛选/翻页，让页面自己发请求，插件只截取返回内容。
+   * brand：品牌名（和页面「品牌商」下拉里的写法一致）；shops：要看的店铺（空 = 该品牌下所有店铺）。
+   * 返回 { ok, total, missing: [...], byShop: { 店铺: { total, missing } }, log }。
+   */
+  async function fetchFmsBaseDataMissing(brand, shops) {
+    const log = [];
+    const step = (m) => log.push(m);
+    try {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function waitFor(fn, label, timeoutMs = 20000, intervalMs = 200) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const v = fn();
+          if (v) return v;
+          await sleep(intervalMs);
+        }
+        const last = fn(); // 页面被卡住期间条件可能已经满足，过了期限也要再看一眼
+        if (last) return last;
+        throw new Error("等待超时: " + label);
+      }
+      const vis = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+      const fire = (el) => {
+        for (const t of ["mousedown", "mouseup", "click"]) el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+      };
+
+      const capKey = "__bdFmsCap";
+      window[capKey] = [];
+      if (!window.__bdFmsHooked) {
+        window.__bdFmsHooked = true;
+        const origOpen = XMLHttpRequest.prototype.open;
+        const origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function (method, url) {
+          this.__bf = { url: String(url) };
+          return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function (body) {
+          const info = this.__bf;
+          if (info) {
+            info.body = typeof body === "string" ? body : "";
+            this.addEventListener("load", () => {
+              (window[capKey] || []).push({ url: info.url, body: info.body, text: this.responseText });
+            });
+          }
+          return origSend.apply(this, arguments);
+        };
+      }
+      const bodyOf = (c) => {
+        try {
+          return JSON.parse(c.body);
+        } catch (e) {
+          return {};
+        }
+      };
+      const isList = (c) => /base-data\/page/.test(c.url);
+
+      const formItem = (label) =>
+        [...document.querySelectorAll(".el-form-item")].find((i) => {
+          const l = i.querySelector(".el-form-item__label");
+          return l && l.textContent.trim() === label && vis(i);
+        });
+      // 在多选下拉里选一个选项，选完点空白处收起下拉
+      async function pickMulti(label, wanted) {
+        const item = await waitFor(() => formItem(label), "筛选项「" + label + "」");
+        fire(item.querySelector(".el-select__wrapper"));
+        await sleep(500);
+        const opt = await waitFor(
+          () => [...document.querySelectorAll(".el-select-dropdown__item")].filter(vis).find((o) => o.textContent.trim() === wanted),
+          label + "选项「" + wanted + "」（下拉里没有这个选项）"
+        );
+        opt.click();
+        await sleep(300);
+        fire(document.body);
+        await sleep(500);
+        // 选了多个时下拉可能把标签折叠成「+N」，所以看到「+N」也算选上了
+        const tags = [...item.querySelectorAll(".el-tag")].map((t) => t.textContent.trim());
+        if (!tags.includes(wanted) && !tags.some((t) => /^\+\s*\d+$/.test(t))) throw new Error(label + "选择未生效: " + wanted);
+        step("已选" + label + " " + wanted);
+      }
+
+      // 1. 先把每页条数切到 1000，等页面自己的那次加载结束（切换条数会让页面立刻查一次）
+      const pagination = await waitFor(
+        () => [...document.querySelectorAll(".el-pagination")].find((p) => vis(p) && p.querySelector(".el-pagination__sizes .el-select__wrapper")),
+        "分页组件"
+      );
+      const sizeWrapper = pagination.querySelector(".el-pagination__sizes .el-select__wrapper");
+      if (!/1000/.test(sizeWrapper.textContent)) {
+        window[capKey].length = 0;
+        fire(sizeWrapper);
+        const option = await waitFor(
+          () => [...document.querySelectorAll(".el-select-dropdown__item")].filter(vis).find((li) => li.textContent.trim() === "1000条/页"),
+          "每页1000条选项"
+        );
+        option.click();
+        await waitFor(() => window[capKey].some((c) => isList(c) && bodyOf(c).size === 1000), "切换每页条数后的加载", 40000);
+        await sleep(500);
+      }
+
+      // 2. 选品牌、店铺，查询
+      await pickMulti("品牌商", brand);
+      const wantShops = Array.isArray(shops) ? shops : [];
+      for (const s of wantShops) await pickMulti("店铺", s);
+      const sameSet = (a, b) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
+      const isMine = (c, page) => {
+        const b = bodyOf(c);
+        return isList(c) && b.size === 1000 && b.current === page && sameSet(b.brandNameList, [brand]) && sameSet(b.shopCodeList, wantShops);
+      };
+      window[capKey].length = 0;
+      const queryBtn = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "查询" && vis(b));
+      if (!queryBtn) throw new Error("按钮未找到: 查询");
+      queryBtn.click();
+
+      // 3. 逐页读完
+      let records = [];
+      let total = 0;
+      for (let page = 1; ; page++) {
+        const hit = await waitFor(() => window[capKey].filter((c) => isMine(c, page)).pop(), "基础数据第" + page + "页", 40000);
+        const json = JSON.parse(hit.text);
+        if (!json.success || !json.data || !Array.isArray(json.data.records)) throw new Error("基础数据接口返回异常: " + (json.responseDesc || ""));
+        records = records.concat(json.data.records);
+        total = json.data.total;
+        step("已读取第" + page + "页，累计 " + records.length + "/" + total);
+        if (records.length >= total) break;
+        const next = pagination.querySelector(".btn-next");
+        if (!next || next.disabled) throw new Error("基础数据没读完但没有下一页");
+        window[capKey].length = 0;
+        next.click();
+      }
+      if (records.length !== total) throw new Error("基础数据条数不一致: 读到" + records.length + "，总数" + total);
+      const wrong = records.find((r) => r.brandName !== brand);
+      if (wrong) throw new Error("读到了别的品牌的数据（" + wrong.brandName + "），已中止");
+
+      const noPrice = (r) => r.settlementPrice === null || r.settlementPrice === undefined || r.settlementPrice === "";
+      const byShop = {};
+      for (const r of records) {
+        const e = (byShop[r.shopCode] = byShop[r.shopCode] || { total: 0, missing: 0 });
+        e.total++;
+        if (noPrice(r)) e.missing++;
+      }
+      const missing = records.filter(noPrice).map((r) => ({
+        siteCode: r.siteCode,
+        shopCode: r.shopCode,
+        brandName: r.brandName,
+        sku: r.sku,
+        brandSku: r.brandSku,
+        style: r.style,
+        color: r.color,
+        size: r.size,
+        currency: r.settlementCurrency,
+        dataStatus: r.dataStatus,
+      }));
+      step("缺结算价 " + missing.length + " 行（共 " + total + " 行）");
+      return { ok: true, total, missing, byShop, log };
+    } catch (err) {
+      console.error("[基础数据全量匹配] 读 FMS 失败:", err);
+      return { ok: false, error: (err && err.message) || String(err), log };
+    }
+  }
+
+  /**
+   * EH「Pricing」页：切到指定 Channel，每页 100 条把该 Channel 的全部商品翻完（让页面自己发请求，只截取返回），
+   * 汇总成 { [mm_sku_code]: { seller, cost, currency } }。
+   * channels：["justfab-us", ...]。返回 { ok, results: { [channel]: { skus, count, error? } }, log }。
+   */
+  async function fetchEhCatalog(channels) {
+    const log = [];
+    const step = (m) => log.push(m);
+    try {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function waitFor(fn, label, timeoutMs = 20000, intervalMs = 200) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const v = fn();
+          if (v) return v;
+          await sleep(intervalMs);
+        }
+        const last = fn(); // 页面被卡住期间条件可能已经满足，过了期限也要再看一眼
+        if (last) return last;
+        throw new Error("等待超时: " + label);
+      }
+      const vis = (e) => e.getClientRects().length > 0;
+      const fire = (el) => {
+        for (const t of ["mousedown", "mouseup", "click"]) el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+      };
+
+      const capKey = "__bdEhListCap";
+      window[capKey] = [];
+      if (!window.__bdEhListHooked) {
+        window.__bdEhListHooked = true;
+        const origOpen = XMLHttpRequest.prototype.open;
+        const origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function (method, url) {
+          this.__bl = { url: String(url) };
+          return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function () {
+          const info = this.__bl;
+          if (info) {
+            this.addEventListener("load", () => {
+              (window[capKey] || []).push({ url: info.url, text: this.responseText });
+            });
+          }
+          return origSend.apply(this, arguments);
+        };
+      }
+      const paramsOf = (c) => {
+        try {
+          return new URL(c.url, location.origin).searchParams;
+        } catch (e) {
+          return new URLSearchParams();
+        }
+      };
+      const isList = (c) => /pricing\/selling\/list/.test(c.url);
+
+      const chanRe = /^justfab[-_ ]?[a-z0-9]+$/i;
+      const sameCh = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+      const channelEls = () => [...document.querySelectorAll("*")].filter((e) => vis(e) && e.children.length === 0 && chanRe.test(e.textContent.trim()));
+      async function setChannel(name) {
+        const cur = await waitFor(() => channelEls()[0], "Channel 选择器", 15000);
+        if (sameCh(cur.textContent, name)) return false;
+        const box = cur.closest(".ant-select");
+        let el = cur;
+        let opt = null;
+        for (let depth = 0; el && depth < 6 && !opt; depth++, el = el.parentElement) {
+          fire(el);
+          await sleep(400);
+          opt = channelEls().find((e) => e !== cur && sameCh(e.textContent, name));
+        }
+        if (!opt) throw new Error("EH 里没有 Channel: " + name);
+        fire(opt);
+        const switched = box
+          ? () => (box.querySelector(".ant-select-selection-item") || box).textContent.toLowerCase().includes(name.toLowerCase())
+          : () => channelEls().some((e) => sameCh(e.textContent, name));
+        await waitFor(switched, "切换Channel: " + name);
+        await sleep(600);
+        return true;
+      }
+
+      // 每页条数先切到 100（EH 最多 100）
+      async function ensureSize100() {
+        const wrap = await waitFor(() => [...document.querySelectorAll(".ant-pagination-options .ant-select")].find(vis), "分页条数选择");
+        if (/100/.test(wrap.textContent)) return false;
+        fire(wrap.querySelector(".ant-select-selector") || wrap);
+        const opt = await waitFor(() => [...document.querySelectorAll(".ant-select-item-option")].filter(vis).find((o) => /^100/.test(o.textContent.trim())), "每页100条选项");
+        opt.click();
+        return true;
+      }
+
+      const results = {};
+      for (const ch of channels) {
+        const res = { skus: {}, count: 0 };
+        results[ch] = res;
+        try {
+          window[capKey].length = 0;
+          const switched = await setChannel(ch);
+          step("Channel: " + ch + (switched ? "（已切换）" : "（当前）"));
+          await sleep(800);
+          window[capKey].length = 0;
+          const changed = await ensureSize100();
+          if (changed) await waitFor(() => window[capKey].some((c) => isList(c) && paramsOf(c).get("limit") === "100" && paramsOf(c).get("page") === "1"), "每页100条后的加载", 150000);
+          else {
+            // 已经是 100 条/页：点第 1 页让页面重新发一次请求
+            const first = [...document.querySelectorAll(".ant-pagination-item")].find((e) => e.textContent.trim() === "1");
+            if (first) first.click();
+            await waitFor(() => window[capKey].some((c) => isList(c) && paramsOf(c).get("limit") === "100"), "加载第1页", 150000);
+          }
+          await sleep(300);
+
+          let seen = 0;
+          let total = 0;
+          for (let page = 1; ; page++) {
+            const hit = await waitFor(() => window[capKey].filter((c) => isList(c) && paramsOf(c).get("limit") === "100" && paramsOf(c).get("page") === String(page)).pop(), "EH 第" + page + "页", 150000);
+            const json = JSON.parse(hit.text);
+            if (json.code !== 0 || !json.data) throw new Error("EH 接口返回异常: " + (json.message || json.code));
+            const list = json.data.list || [];
+            total = json.data.total || 0;
+            for (const spu of list) {
+              for (const s of spu.skus || []) {
+                if (s.shop_name && !sameCh(s.shop_name, ch)) continue;
+                const markets = Array.isArray(s.markets) ? s.markets : [];
+                const m = markets.find((x) => x && x.cost_amount != null && x.cost_amount !== "") || markets[0] || {};
+                res.skus[s.mm_sku_code] = { seller: s.seller_sku_code || "", cost: m.cost_amount == null ? "" : m.cost_amount, currency: m.cost_currency || m.currency || "" };
+              }
+            }
+            seen += list.length;
+            step(ch + " 第" + page + "页，累计商品 " + seen + "/" + total);
+            if (seen >= total || !list.length) break;
+            const next = document.querySelector(".ant-pagination-next");
+            if (!next || /disabled/.test(next.className) || next.getAttribute("aria-disabled") === "true") break;
+            window[capKey].length = 0;
+            next.click();
+          }
+          res.count = Object.keys(res.skus).length;
+          step(ch + " 共读到 " + res.count + " 个 SKU");
+        } catch (err) {
+          res.error = (err && err.message) || String(err);
+          step(ch + " 失败: " + res.error);
+        }
+      }
+      return { ok: true, results, log };
+    } catch (err) {
+      console.error("[基础数据全量匹配] 读 EH 失败:", err);
+      return { ok: false, error: (err && err.message) || String(err), log };
+    }
+  }
+
+  /**
+   * EH「Pricing」页：对每个 Channel 点右上角 Export →「匹配当前搜索」→ OK，等导出任务完成，
+   * 再点任务列表里的 Download，只截取页面自己请求到的下载地址（不下载到本机、不读取任何登录信息）。
+   * 返回 { ok, results: { [channel]: { url, fileName, error? } }, log }；CSV 由后台用该地址取回。
+   */
+  async function fetchEhExportLinks(channels) {
+    const log = [];
+    const step = (m) => log.push(m);
+    const restore = [];
+    try {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function waitFor(fn, label, timeoutMs = 20000, intervalMs = 200) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const v = fn();
+          if (v) return v;
+          await sleep(intervalMs);
+        }
+        const last = fn();
+        if (last) return last;
+        throw new Error("等待超时: " + label);
+      }
+      const vis = (e) => e.getClientRects().length > 0;
+      const fire = (el) => {
+        for (const t of ["mousedown", "mouseup", "click"]) el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+      };
+
+      const capKey = "__bdEhExpCap";
+      window[capKey] = [];
+      if (!window.__bdEhExpHooked) {
+        window.__bdEhExpHooked = true;
+        const origOpen = XMLHttpRequest.prototype.open;
+        const origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function (method, url) {
+          this.__be = { url: String(url) };
+          return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function () {
+          const info = this.__be;
+          if (info) {
+            this.addEventListener("load", () => {
+              (window[capKey] || []).push({ url: info.url, text: this.responseText });
+            });
+          }
+          return origSend.apply(this, arguments);
+        };
+      }
+      // 点 Download 时页面会自己把文件下载到本机，这里拦住，只要地址
+      const isFileUrl = (u) => /file\.engagehub\./i.test(String(u || ""));
+      const aClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        if (isFileUrl(this.href)) return;
+        return aClick.apply(this, arguments);
+      };
+      restore.push(() => { HTMLAnchorElement.prototype.click = aClick; });
+      const wOpen = window.open;
+      window.open = function (u) {
+        if (isFileUrl(u)) return null;
+        return wOpen.apply(this, arguments);
+      };
+      restore.push(() => { window.open = wOpen; });
+
+      const chanRe = /^justfab[-_ ]?[a-z0-9]+$/i;
+      const sameCh = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+      const channelEls = () => [...document.querySelectorAll("*")].filter((e) => vis(e) && e.children.length === 0 && chanRe.test(e.textContent.trim()));
+      async function setChannel(name) {
+        const cur = await waitFor(() => channelEls()[0], "Channel 选择器", 15000);
+        if (sameCh(cur.textContent, name)) return false;
+        const box = cur.closest(".ant-select");
+        let el = cur;
+        let opt = null;
+        for (let depth = 0; el && depth < 6 && !opt; depth++, el = el.parentElement) {
+          fire(el);
+          await sleep(400);
+          opt = channelEls().find((e) => e !== cur && sameCh(e.textContent, name));
+        }
+        if (!opt) throw new Error("EH 里没有 Channel: " + name);
+        fire(opt);
+        const switched = box
+          ? () => (box.querySelector(".ant-select-selection-item") || box).textContent.toLowerCase().includes(name.toLowerCase())
+          : () => channelEls().some((e) => sameCh(e.textContent, name));
+        await waitFor(switched, "切换Channel: " + name);
+        await sleep(600);
+        return true;
+      }
+
+      const parse = (c) => {
+        try { return JSON.parse(c.text); } catch (e) { return null; }
+      };
+      const taskIcon = () => [...document.querySelectorAll(".anticon-download")].find((e) => vis(e) && e.getBoundingClientRect().top < 60);
+      const taskItems = () => [...document.querySelectorAll('[class*="_filename_"]')].filter(vis);
+      const exportBtn = () => [...document.querySelectorAll("button")].find((b) => vis(b) && /^\s*Export\s*$/.test(b.textContent) && b.getBoundingClientRect().top < 200);
+
+      const results = {};
+      for (const ch of channels) {
+        const res = {};
+        results[ch] = res;
+        try {
+          const switched = await setChannel(ch);
+          step("Channel: " + ch + (switched ? "（已切换）" : "（当前）"));
+          await sleep(1500); // 等列表按新 Channel 刷新，导出范围才是这个 Channel
+
+          // Export → Records matching your search → OK
+          const startSec = Math.floor(Date.now() / 1000) - 30; // 只认这次点出来的任务
+          window[capKey].length = 0;
+          const eb = await waitFor(exportBtn, "Export 按钮", 15000);
+          eb.click();
+          const radio = await waitFor(() => [...document.querySelectorAll("label")].filter(vis).find((l) => /Records matching your search/i.test(l.textContent)), "导出范围选项", 10000);
+          const input = radio.querySelector("input");
+          if (input && !input.checked) radio.click();
+          const ok = await waitFor(() => [...document.querySelectorAll("button")].filter(vis).find((b) => /^\s*OK\s*$/.test(b.textContent)), "OK 按钮", 10000);
+          ok.click();
+          const created = await waitFor(() => window[capKey].find((c) => /pricing\/selling\/export/.test(c.url)), "创建导出任务", 30000);
+          const cj = parse(created);
+          if (!cj || cj.code !== 0) throw new Error("创建导出任务失败: " + ((cj && (cj.message || cj.code)) || "无返回"));
+          step(ch + " 已创建导出任务");
+
+          // 打开任务列表，等最新一条 admin_pricing 任务完成
+          let item = null;
+          const deadline = Date.now() + 240000;
+          while (Date.now() < deadline && !item) {
+            window[capKey].length = 0;
+            const icon = await waitFor(taskIcon, "导出任务图标", 10000);
+            if (!taskItems().length) fire(icon.closest("button") || icon);
+            await waitFor(() => window[capKey].find((c) => /export\/list/.test(c.url)), "导出任务列表", 20000);
+            const lj = parse(window[capKey].filter((c) => /export\/list/.test(c.url)).pop());
+            const list = (lj && lj.data && lj.data.list) || [];
+            const latest = list.filter((t) => t.export_type === "admin_pricing" && t.created_at >= startSec)[0];
+            if (latest && latest.status === 2) {
+              item = latest;
+            } else if (latest && latest.status !== 1 && latest.status !== 0) {
+              throw new Error("导出任务状态异常: " + (latest.status_name || latest.status) + (latest.failure_reason ? "（" + latest.failure_reason + "）" : ""));
+            } else {
+              step(ch + " 导出生成中…");
+              if (taskItems().length) fire(icon.closest("button") || icon); // 关掉再开，触发刷新
+              await sleep(4000);
+            }
+          }
+          if (!item) throw new Error("导出任务 4 分钟内没有完成");
+
+          // 点这条任务的 Download，截取下载地址
+          window[capKey].length = 0;
+          if (!taskItems().length) fire((await waitFor(taskIcon, "导出任务图标", 10000)).closest("button") || taskIcon());
+          const nameEl = await waitFor(() => taskItems().find((e) => e.textContent.trim() === item.file_name), "任务列表里的 " + item.file_name, 10000);
+          let box = nameEl;
+          let dl = null;
+          for (let i = 0; i < 6 && box && !dl; i++, box = box.parentElement) {
+            dl = [...box.querySelectorAll("span,button,a")].find((e) => vis(e) && /^\s*Download\s*$/.test(e.textContent) && e.children.length === 0);
+          }
+          if (!dl) throw new Error("找不到 Download 按钮");
+          (dl.closest("button") || dl).click();
+          const hit = await waitFor(() => window[capKey].find((c) => /export\/download-url/.test(c.url)), "下载地址", 30000);
+          const dj = parse(hit);
+          const url = dj && dj.data && dj.data.url;
+          if (!url) throw new Error("没有拿到下载地址");
+          res.url = url;
+          res.fileName = item.file_name;
+          step(ch + " 导出文件已生成: " + item.file_name);
+          // 收起任务列表
+          const icon2 = taskIcon();
+          if (icon2 && taskItems().length) fire(icon2.closest("button") || icon2);
+        } catch (err) {
+          res.error = (err && err.message) || String(err);
+          step(ch + " 失败: " + res.error);
+        }
+      }
+      return { ok: true, results, log };
+    } catch (err) {
+      console.error("[基础数据全量匹配] 导出 EH 失败:", err);
+      return { ok: false, error: (err && err.message) || String(err), log };
+    } finally {
+      restore.forEach((f) => { try { f(); } catch (e) { /* ignore */ } });
+    }
+  }
+
+  return { FMS_ORIGIN, FMS_BILL_URL, FMS_BASEDATA_URL, EH_ORIGIN, EH_PRICING_URL, fetchMissingPriceRows, fetchEhCosts, importBaseDataFile, fetchFmsBaseDataMissing, fetchEhCatalog, fetchEhExportLinks };
 })();

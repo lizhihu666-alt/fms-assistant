@@ -157,7 +157,97 @@ const FMSBaseData = (() => {
     return { ok: warnings.length === 0, warnings };
   }
 
-  return { SHOP_TO_CHANNEL, SHEET_NAME, HEADERS, channelOf, planMissing, resolve, checkRows, toWorkbook, fileName };
+  /**
+   * 全量匹配用：FMS「基础数据」里缺价的行（字段是基础数据接口的）→ planMissing 能吃的格式，
+   * 并统计「没有对应 EH Channel 的店铺」有多少行（这些不处理，单独告诉用户）。
+   * 返回 { plan, skippedShops: { 店铺: 行数 } }。
+   */
+  function planFromFmsRows(missingRows) {
+    const rows = missingRows.map((r) => ({
+      siteCode: r.siteCode,
+      shopCode: r.shopCode,
+      brandName: r.brandName,
+      sku: r.sku,
+      style: r.style,
+      color: r.color,
+      size: r.size,
+      currency: r.currency,
+    }));
+    const plan = planMissing(rows);
+    const skippedShops = {};
+    for (const it of plan.unmapped) skippedShops[it.shop] = (skippedShops[it.shop] || 0) + 1;
+    return { plan, skippedShops };
+  }
+
+  function matchFileName(brand, now) {
+    const d = now || new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    return `基础数据_${String(brand).replace(/[\\/:*?"<>|]/g, "_")}_全量匹配_${ymd}.xlsx`;
+  }
+
+  /** 解析 CSV 文本（支持引号、转义引号、引号内换行、BOM） */
+  function parseCsv(text) {
+    const s = String(text || "").replace(/^﻿/, "");
+    const rows = [];
+    let row = [];
+    let cur = "";
+    let q = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (q) {
+        if (c === '"') {
+          if (s[i + 1] === '"') { cur += '"'; i++; } else q = false;
+        } else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ",") { row.push(cur); cur = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && s[i + 1] === "\n") i++;
+        row.push(cur); cur = "";
+        if (row.length > 1 || row[0] !== "") rows.push(row);
+        row = [];
+      } else cur += c;
+    }
+    if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+    return rows;
+  }
+
+  /**
+   * 解析 EH「Pricing」导出的 CSV，成本优先取 Cost(Active)，没有再取 Base Cost(Active)。
+   * 返回 { skus: { [mm_sku]: { seller, cost, currency, source } }, count, noCost }
+   */
+  function parseEhPricingCsv(text) {
+    const rows = parseCsv(text);
+    const skus = {};
+    if (!rows.length) return { skus, count: 0, noCost: 0 };
+    const head = rows[0].map((h) => String(h).trim());
+    const idx = (name) => head.indexOf(name);
+    const iMm = idx("MM SKU");
+    const iSeller = idx("Seller SKU");
+    const pairs = [
+      [idx("Cost(Active)"), idx("Cost Currency(Active)"), "Cost(Active)"],
+      [idx("Base Cost(Active)"), idx("Base Cost Currency(Active)"), "Base Cost(Active)"],
+    ].filter((p) => p[0] >= 0);
+    if (iMm < 0 || !pairs.length) throw new Error("EH 导出文件缺少 MM SKU / Cost 列，请确认导出的是 Pricing 页面");
+    let noCost = 0;
+    for (const r of rows.slice(1)) {
+      const mm = String(r[iMm] || "").trim();
+      if (!mm) continue;
+      let cost = "";
+      let currency = "";
+      let source = "";
+      for (const [ci, cu, name] of pairs) {
+        const v = String(r[ci] == null ? "" : r[ci]).trim();
+        if (v !== "") { cost = v; currency = String(r[cu] || "").trim(); source = name; break; }
+      }
+      const prev = skus[mm];
+      if (prev && prev.cost !== "") continue; // 多个 Market 行：已有成本的不被覆盖
+      skus[mm] = { seller: iSeller >= 0 ? String(r[iSeller] || "").trim() : "", cost, currency, source };
+    }
+    for (const k of Object.keys(skus)) if (skus[k].cost === "") noCost++;
+    return { skus, count: Object.keys(skus).length, noCost };
+  }
+
+  return { SHOP_TO_CHANNEL, SHEET_NAME, HEADERS, channelOf, planMissing, planFromFmsRows, resolve, checkRows, toWorkbook, fileName, matchFileName, parseCsv, parseEhPricingCsv };
 })();
 
 if (typeof module !== "undefined") module.exports = FMSBaseData;

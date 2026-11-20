@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FMS付款助手",
-  "version": "0.10.13",
+  "version": "0.10.14",
   "description": "自动清洗FMS品牌商账单、下载对账文件、请款并上传发票，最后留待人工核查提交",
   "author": "Leo Hu",
   "action": {
@@ -26,6 +26,7 @@
   "host_permissions": [
     "https://fms-jf.wangoon.cn/*",
     "https://admin.engagehub.tsostech.com/*",
+    "https://file.engagehub.tsostech.com/*",
     "https://jf-fms-s3.s3.us-west-2.amazonaws.com/*"
   ]
 }

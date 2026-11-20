@@ -172,6 +172,90 @@ async function runBaseDataJob(billNos) {
   }
 }
 
+// ---- 全量匹配：不等账单缺数据，主动把一个品牌在 FMS「基础数据」里缺结算价的行，全部到 EH 去找成本补上 ----
+const MATCH_KEY = "matchJob";
+async function setMatch(patch) {
+  const cur = (await chrome.storage.local.get(MATCH_KEY))[MATCH_KEY] || {};
+  await chrome.storage.local.set({ [MATCH_KEY]: Object.assign({}, cur, patch) });
+}
+async function runMatchJob(brand, shops) {
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
+  const reset = { stats: null, unresolved: "", rows: [], fileName: "", warnings: [] };
+  try {
+    await setMatch({ ...reset, text: "正在读取 FMS 基础数据（" + brand + "）…", kind: "busy" });
+    // 选下拉、翻页都依赖页面动画，放后台标签页会被浏览器暂停，所以开前台标签页，跑完自动切回
+    const fms = await withBackgroundTab(
+      BaseDataSync.FMS_BASEDATA_URL,
+      "FMS",
+      (tabId) => runStep(tabId, BaseDataSync.fetchFmsBaseDataMissing, [brand, shops], "读取 FMS 基础数据"),
+      { foreground: true }
+    );
+    const fmsStats = { total: fms.total, missing: fms.missing.length, byShop: fms.byShop };
+    if (!fms.missing.length) {
+      await setMatch({ running: false, kind: "ok", stats: { ...fmsStats, skus: 0, matched: 0, unresolved: 0, skipped: {} }, text: brand + " 在 FMS 基础数据里共 " + fms.total + " 行，没有缺结算价的。" });
+      return;
+    }
+
+    const { plan, skippedShops } = FMSBaseData.planFromFmsRows(fms.missing);
+    let eh = {};
+    if (plan.jobs.length) {
+      const chans = plan.jobs.map((j) => j.channel);
+      await setMatch({ text: "FMS 缺价 " + fms.missing.length + " 行（" + plan.items.length + " 个 SKU）。正在读取 EH（" + chans.join("、") + "）的全量成本…", kind: "busy" });
+      const res = await withBackgroundTab(
+        BaseDataSync.EH_PRICING_URL,
+        "EH",
+        (tabId) => runStep(tabId, BaseDataSync.fetchEhExportLinks, [chans], "导出 EH 全量成本"),
+        { foreground: true }
+      );
+      // 导出文件由后台取回并解析：成本优先取 Cost(Active)，没有再取 Base Cost(Active)
+      for (const ch of chans) {
+        const r = res.results[ch] || {};
+        if (r.error || !r.url) { eh[ch] = { skus: {}, count: 0, error: r.error || "没有拿到导出文件" }; continue; }
+        try {
+          await setMatch({ text: "EH（" + ch + "）导出已生成，正在读取 " + r.fileName + "…", kind: "busy" });
+          const resp = await fetch(r.url);
+          if (!resp.ok) throw new Error("下载导出文件失败 HTTP " + resp.status);
+          const parsed = FMSBaseData.parseEhPricingCsv(await resp.text());
+          eh[ch] = { skus: parsed.skus, count: parsed.count };
+        } catch (e) {
+          eh[ch] = { skus: {}, count: 0, error: (e && e.message) || String(e) };
+        }
+      }
+    }
+
+    const out = FMSBaseData.resolve(plan.items, eh);
+    // 按原因归类，比一长串 SKU 好看；每类只列前几个
+    const groups = new Map();
+    for (const u of out.unresolved) {
+      const key = u.reason.replace(/（[^）]*）/g, "").replace(/\(.*?\)/g, "");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(u);
+    }
+    const lines = [];
+    for (const [reason, arr] of groups) {
+      lines.push(reason + "（" + arr.length + " 个）");
+      arr.slice(0, 5).forEach((u) => lines.push("  " + u.item.sku + "  " + u.item.shop + "/" + u.item.site));
+      if (arr.length > 5) lines.push("  …还有 " + (arr.length - 5) + " 个");
+    }
+    const check = FMSBaseData.checkRows(out.rows);
+    await setMatch({
+      running: false,
+      kind: out.unresolved.length || check.warnings.length ? "" : "ok",
+      stats: { ...fmsStats, skus: plan.items.length, matched: out.rows.length, unresolved: out.unresolved.length, skipped: skippedShops },
+      text: out.rows.length ? "已匹配 " + out.rows.length + " 个。请先检查导入文件，没问题再点「一键导入」。" : "没有能补上的 SKU。",
+      unresolved: lines.join("\n"),
+      warnings: check.warnings.slice(0, 10),
+      rows: out.rows,
+      fileName: out.rows.length ? FMSBaseData.matchFileName(brand) : "",
+    });
+  } catch (err) {
+    console.error(err);
+    await setMatch({ running: false, kind: "error", ...reset, text: "全量匹配失败：" + err.message });
+  } finally {
+    clearInterval(keepAlive);
+  }
+}
+
 // 一键导入：把人工复查过的 xlsx 传进 FMS「基础数据」→ 导入。耗时较长，直接等结果再回复。
 async function runImport(fileName, base64) {
   const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
@@ -509,6 +593,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       await setGen({ running: true, startedAt: Date.now(), brands, shop: msg.shop, months, text: "任务已开始…", kind: "busy", bills: [] });
       sendResponse({ started: true });
       runGenerateJob(brands, msg.shop, months);
+    })();
+    return true;
+  }
+  if (msg && msg.type === "match:start") {
+    (async () => {
+      const job = (await chrome.storage.local.get(MATCH_KEY))[MATCH_KEY];
+      if (job && job.running && Date.now() - (job.startedAt || 0) < STALE_JOB_MS) {
+        sendResponse({ started: false, reason: "已有全量匹配任务正在进行" });
+        return;
+      }
+      const shops = Array.isArray(msg.shops) ? msg.shops : [];
+      await setMatch({ running: true, startedAt: Date.now(), brand: msg.brand, shops, text: "任务已开始…", kind: "busy", stats: null, unresolved: "", rows: [], fileName: "", warnings: [] });
+      sendResponse({ started: true });
+      runMatchJob(msg.brand, shops);
     })();
     return true;
   }
